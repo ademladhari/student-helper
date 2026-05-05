@@ -10,9 +10,10 @@ import {
   View,
 } from 'react-native';
 import HomeScreen from './screens/HomeScreen';
-import AuthScreen from './screens/AuthScreen';
 import FocusScreen from './screens/FocusScreen';
 import ScanScreen from './screens/ScanScreen';
+import UtilityScreen from './screens/UtilityScreen';
+import FileManagerScreen from './screens/FileManagerScreen';
 import StatsScreen from './screens/StatsScreen';
 import TasksScreen from './screens/TasksScreen';
 import { palette, radius, spacing } from './src/theme/tokens';
@@ -22,9 +23,10 @@ import {
   convertCandidatesToDraftTasks,
   summarizeStats,
 } from './src/utils/studyPlanner';
+import { useFileLibrary } from './src/fileLibrary/useFileLibrary';
 
-type TabKey = 'Home' | 'Scan' | 'Tasks' | 'Stats';
-type ScreenRoute = TabKey | 'Focus';
+type TabKey = 'Home' | 'Utility' | 'Tasks' | 'Stats';
+type ScreenRoute = TabKey | 'Focus' | 'FileManager';
 
 type AuthUser = {
   id: string;
@@ -32,10 +34,15 @@ type AuthUser = {
   email: string;
 };
 
-const tabs: TabKey[] = ['Home', 'Scan', 'Tasks', 'Stats'];
+type LearningGoal = {
+  title: string;
+  targetDate: string;
+};
+
+const tabs: TabKey[] = ['Home', 'Utility', 'Tasks', 'Stats'];
 const tabIcons: Record<TabKey, string> = {
   Home: 'H',
-  Scan: 'S',
+  Utility: 'U',
   Tasks: 'T',
   Stats: 'ST',
 };
@@ -57,13 +64,15 @@ function createInitialFocusSession(): FocusSessionState {
 function App() {
   const [activeScreen, setActiveScreen] = useState<ScreenRoute>('Home');
   const [tasks, setTasks] = useState<TaskItem[]>([]);
-  const [authUser, setAuthUser] = useState<AuthUser | null>(null);
+  const [authUser, setAuthUser] = useState<AuthUser>({ id: 'guest', name: 'Guest', email: '' });
   const [focusSession, setFocusSession] = useState<FocusSessionState>(() => createInitialFocusSession());
+  const [learningGoal, setLearningGoal] = useState<LearningGoal>({ title: '', targetDate: '' });
 
   const stats = useMemo(() => summarizeStats(tasks), [tasks]);
   const todayPlan = useMemo(() => buildTodayPlan(tasks), [tasks]);
+  const fileLibrary = useFileLibrary();
 
-  const isAuthenticated = authUser !== null;
+  const isAuthenticated = true;
 
   function addTask(input: TaskDraftInput) {
     const title = input.title.trim();
@@ -79,6 +88,7 @@ function App() {
       status: 'todo',
       source: 'manual',
       estimatedPomodoros: Math.max(1, Math.round(input.estimatedPomodoros)),
+      priority: input.priority,
     };
 
     setTasks(current => [task, ...current]);
@@ -95,6 +105,24 @@ function App() {
     setActiveScreen('Tasks');
   }
 
+  function createAiDraftTasks(drafts: TaskDraftInput[]) {
+    if (drafts.length === 0) {
+      return;
+    }
+
+    const taskDrafts: TaskItem[] = drafts.map((draft, index) => ({
+      id: `draft-ai-${Date.now()}-${index}`,
+      title: draft.title.trim() || 'Untitled task',
+      dueDate: draft.dueDate,
+      status: 'draft',
+      source: 'scan',
+      estimatedPomodoros: Math.max(1, Math.round(draft.estimatedPomodoros)),
+      priority: draft.priority,
+    }));
+
+    setTasks(current => [...taskDrafts, ...current]);
+  }
+
   function confirmDraft(id: string) {
     setTasks(current =>
       current.map(task => (task.id === id ? { ...task, status: 'todo' } : task)),
@@ -108,9 +136,11 @@ function App() {
           return task;
         }
 
+        const isCompleting = task.status !== 'done';
         return {
           ...task,
-          status: task.status === 'done' ? 'todo' : 'done',
+          status: isCompleting ? 'done' : 'todo',
+          completedAt: isCompleting ? new Date().toISOString() : undefined,
         };
       }),
     );
@@ -142,21 +172,20 @@ function App() {
   }, [activeScreen, pauseFocusSession]);
 
   const ScreenComponent = useMemo(() => {
-    if (!isAuthenticated) {
+    if (activeScreen === 'Scan') {
+      return <ScanScreen onCreateDrafts={createDraftTasks} onCreateAiDrafts={createAiDraftTasks} />;
+    }
+    if (activeScreen === 'FileManager') {
+      return <FileManagerScreen onBack={() => goToScreen('Utility')} fileLibrary={fileLibrary} />;
+    }
+    if (activeScreen === 'Utility') {
       return (
-        <AuthScreen
-          onAuthenticated={({ user }) => {
-            setAuthUser(user);
-            setActiveScreen('Home');
-          }}
+        <UtilityScreen
+          onOpenFileManager={() => goToScreen('FileManager')}
+          fileLibrary={fileLibrary}
         />
       );
     }
-
-    if (activeScreen === 'Scan') {
-      return <ScanScreen onCreateDrafts={createDraftTasks} />;
-    }
-
     if (activeScreen === 'Focus') {
       return (
         <FocusScreen
@@ -168,7 +197,6 @@ function App() {
         />
       );
     }
-
     if (activeScreen === 'Tasks') {
       return (
         <TasksScreen
@@ -179,20 +207,33 @@ function App() {
         />
       );
     }
-
     if (activeScreen === 'Stats') {
       return <StatsScreen {...stats} />;
     }
-
     return (
       <HomeScreen
         tasks={tasks}
         todayPlan={todayPlan}
+        goal={learningGoal}
+        onUpdateGoal={setLearningGoal}
         onOpenScan={() => goToScreen('Scan')}
         onStartFocus={() => goToScreen('Focus')}
       />
     );
-  }, [activeScreen, focusSession, goToScreen, isAuthenticated, stats, tasks, todayPlan]);
+  }, [
+    activeScreen,
+    fileLibrary.addFolder,
+    fileLibrary.appendPickedFiles,
+    fileLibrary.hydrated,
+    fileLibrary.managedFiles,
+    fileLibrary.updateFile,
+    focusSession,
+    goToScreen,
+    learningGoal,
+    stats,
+    tasks,
+    todayPlan,
+  ]);
 
   function signOut() {
     setAuthUser(null);
@@ -226,7 +267,8 @@ function App() {
       {isAuthenticated ? (
         <View style={styles.tabBar}>
         {tabs.map(tab => {
-          const isActive = tab === activeScreen;
+          const isActive =
+            tab === activeScreen || (tab === 'Utility' && activeScreen === 'FileManager');
           return (
             <Pressable
               key={tab}

@@ -175,6 +175,7 @@ export default function FocusScreen({ tasks, focusSession, setFocusSession, onAd
       title,
       dueDate: new Date().toISOString(),
       estimatedPomodoros: safePomodoros,
+      priority: 'medium',
     });
 
     if (createdTask) {

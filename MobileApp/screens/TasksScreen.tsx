@@ -20,6 +20,7 @@ export default function TasksScreen({ tasks, onAddTask, onConfirmDraft, onToggle
   const [title, setTitle] = useState('');
   const [dueDate, setDueDate] = useState('');
   const [pomodoros, setPomodoros] = useState('1');
+  const [priority, setPriority] = useState('medium');
 
   const filtered = useMemo(() => {
     if (activeFilter === 'all') {
@@ -43,16 +44,22 @@ export default function TasksScreen({ tasks, onAddTask, onConfirmDraft, onToggle
     const safeDueDate = Number.isNaN(parsedDate.getTime())
       ? new Date().toISOString()
       : parsedDate.toISOString();
+    const normalizedPriority = priority.trim().toLowerCase();
+    const safePriority = ['low', 'medium', 'high'].includes(normalizedPriority)
+      ? (normalizedPriority as 'low' | 'medium' | 'high')
+      : 'medium';
 
     onAddTask({
       title: trimmedTitle,
       dueDate: safeDueDate,
       estimatedPomodoros: safePomodoros,
+      priority: safePriority,
     });
 
     setTitle('');
     setDueDate('');
     setPomodoros('1');
+    setPriority('medium');
   }
 
   return (
@@ -86,6 +93,13 @@ export default function TasksScreen({ tasks, onAddTask, onConfirmDraft, onToggle
           keyboardType="number-pad"
           style={styles.input}
         />
+        <TextInput
+          value={priority}
+          onChangeText={setPriority}
+          placeholder="Priority (low/medium/high)"
+          placeholderTextColor={palette.textMuted}
+          style={styles.input}
+        />
         <Pressable onPress={handleAddTask} style={styles.addButton}>
           <Text style={styles.addButtonText}>Add Task</Text>
         </Pressable>
@@ -112,7 +126,7 @@ export default function TasksScreen({ tasks, onAddTask, onConfirmDraft, onToggle
             <View style={styles.taskMain}>
               <Text style={styles.taskTitle}>{task.title}</Text>
               <Text style={styles.taskMeta}>
-                Due {new Date(task.dueDate).toLocaleDateString()} • {task.estimatedPomodoros}x Pomodoro
+                Due {new Date(task.dueDate).toLocaleDateString()} • {task.estimatedPomodoros}x Pomodoro • {task.priority.toUpperCase()} priority
               </Text>
             </View>
 

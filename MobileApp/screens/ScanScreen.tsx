@@ -15,11 +15,13 @@ import {
 import { Asset, launchCamera } from 'react-native-image-picker';
 import AppCard from '../src/components/AppCard';
 import { palette, radius, spacing, typography } from '../src/theme/tokens';
-import { DeadlineCandidate } from '../src/types/study';
+import { DeadlineCandidate, TaskDraftInput } from '../src/types/study';
+import { GEMINI_API_KEY, GEMINI_MODEL } from '../src/config/gemini';
 import { extractDeadlineCandidates } from '../src/utils/studyPlanner';
 
 type Props = {
   onCreateDrafts: (candidates: DeadlineCandidate[]) => void;
+  onCreateAiDrafts: (drafts: TaskDraftInput[]) => void;
 };
 
 const BACKEND_BASE_URLS =
@@ -114,12 +116,135 @@ function buildImageFormData(asset: Asset): FormData | null {
   return formData;
 }
 
-export default function ScanScreen({ onCreateDrafts }: Props) {
+export default function ScanScreen({ onCreateDrafts, onCreateAiDrafts }: Props) {
   const [scannedText, setScannedText] = useState('');
   const [imageUri, setImageUri] = useState('');
   const [isProcessing, setIsProcessing] = useState(false);
+  const [isAiProcessing, setIsAiProcessing] = useState(false);
+  const [aiDrafts, setAiDrafts] = useState<Array<{ id: string; draft: TaskDraftInput }>>([]);
+  const [selectedDrafts, setSelectedDrafts] = useState<Set<string>>(new Set());
 
   const candidates = useMemo(() => extractDeadlineCandidates(scannedText), [scannedText]);
+
+  function sanitizePriority(input: string) {
+    const normalized = input.trim().toLowerCase();
+    if (normalized === 'high' || normalized === 'low' || normalized === 'medium') {
+      return normalized as 'low' | 'medium' | 'high';
+    }
+    return 'medium';
+  }
+
+  function minutesToPomodoros(minutes: number) {
+    if (!Number.isFinite(minutes) || minutes <= 0) {
+      return 1;
+    }
+    return Math.max(1, Math.ceil(minutes / 25));
+  }
+
+  function parseGeminiJson(rawText: string) {
+    const start = rawText.indexOf('[');
+    const end = rawText.lastIndexOf(']');
+    if (start === -1 || end === -1 || end <= start) {
+      throw new Error('AI response did not include a JSON array.');
+    }
+    const jsonSlice = rawText.slice(start, end + 1);
+    return JSON.parse(jsonSlice) as Array<{
+      title: string;
+      dueDate: string;
+      estimatedMinutes: number;
+      priority: string;
+    }>;
+  }
+
+  async function generateAiDrafts() {
+    if (!scannedText.trim()) {
+      Alert.alert('Missing text', 'Scan or paste text before generating AI tasks.');
+      return;
+    }
+
+    if (!GEMINI_API_KEY || GEMINI_API_KEY.includes('REPLACE_WITH')) {
+      Alert.alert('Gemini not configured', 'Add your Gemini API key in src/config/gemini.ts.');
+      return;
+    }
+
+    setIsAiProcessing(true);
+
+    try {
+      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+      const prompt = `You are a study assistant. Convert the OCR text into a concise JSON array of task drafts.\n\nRules:\n- Output ONLY valid JSON (no markdown).\n- Each item must have: title, dueDate (ISO 8601), estimatedMinutes (number), priority (low|medium|high).\n- If no due date is in text, use today's date.\n- Estimated minutes should be realistic (15-240).\n\nOCR text:\n${scannedText}`;
+
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({
+          contents: [
+            {
+              role: 'user',
+              parts: [{ text: prompt }],
+            },
+          ],
+        }),
+      });
+
+      if (!response.ok) {
+        const body = await readResponseBody(response);
+        const message = typeof body === 'string' ? body : body?.error?.message || 'Gemini request failed';
+        throw new Error(message);
+      }
+
+      const payload = await response.json();
+      const aiText = payload?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+      if (!aiText) {
+        throw new Error('Gemini returned an empty response.');
+      }
+
+      const items = parseGeminiJson(aiText);
+      const drafts: Array<{ id: string; draft: TaskDraftInput }> = items.map((item, index) => ({
+        id: `ai-draft-${Date.now()}-${index}`,
+        draft: {
+          title: item.title || 'Untitled task',
+          dueDate: new Date(item.dueDate).toISOString(),
+          estimatedPomodoros: minutesToPomodoros(item.estimatedMinutes),
+          priority: sanitizePriority(item.priority || 'medium'),
+        },
+      }));
+
+      setAiDrafts(drafts);
+      setSelectedDrafts(new Set(drafts.map(draft => draft.id)));
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not generate AI tasks.';
+      Alert.alert('Gemini error', message);
+    } finally {
+      setIsAiProcessing(false);
+    }
+  }
+
+  function toggleDraftSelection(id: string) {
+    setSelectedDrafts(current => {
+      const next = new Set(current);
+      if (next.has(id)) {
+        next.delete(id);
+      } else {
+        next.add(id);
+      }
+      return next;
+    });
+  }
+
+  function confirmSelectedDrafts() {
+    const selected = aiDrafts.filter(draft => selectedDrafts.has(draft.id)).map(draft => draft.draft);
+    if (selected.length === 0) {
+      Alert.alert('No drafts selected', 'Select at least one task to add to your list.');
+      return;
+    }
+
+    onCreateAiDrafts(selected);
+    setAiDrafts([]);
+    setSelectedDrafts(new Set());
+  }
 
   async function openCameraAndExtract() {
     try {
@@ -264,13 +389,50 @@ export default function ScanScreen({ onCreateDrafts }: Props) {
 
         <View style={styles.actions}>
           <Pressable
+            onPress={generateAiDrafts}
+            disabled={!scannedText.trim() || isAiProcessing}
+            style={[styles.primaryButton, (!scannedText.trim() || isAiProcessing) && styles.disabledButton]}>
+            <Text style={styles.primaryButtonText}>
+              {isAiProcessing ? 'Generating AI Drafts...' : 'Generate AI Drafts'}
+            </Text>
+          </Pressable>
+          <Pressable
             onPress={() => onCreateDrafts(candidates)}
             disabled={candidates.length === 0}
-            style={[styles.primaryButton, candidates.length === 0 && styles.disabledButton]}>
-            <Text style={styles.primaryButtonText}>Create Task Drafts</Text>
+            style={[styles.secondaryButton, candidates.length === 0 && styles.disabledButton]}>
+            <Text style={styles.secondaryButtonText}>Use Quick Drafts</Text>
           </Pressable>
         </View>
       </AppCard>
+
+      {aiDrafts.length > 0 ? (
+        <AppCard>
+          <Text style={styles.sectionTitle}>AI Drafts (confirm to add)</Text>
+          {aiDrafts.map(draftItem => (
+            <Pressable
+              key={draftItem.id}
+              onPress={() => toggleDraftSelection(draftItem.id)}
+              style={styles.draftRow}>
+              <View style={[styles.draftCheck, selectedDrafts.has(draftItem.id) && styles.draftCheckActive]}>
+                <Text style={[styles.draftCheckText, selectedDrafts.has(draftItem.id) && styles.draftCheckTextActive]}>
+                  {selectedDrafts.has(draftItem.id) ? '✓' : ''}
+                </Text>
+              </View>
+              <View style={styles.draftInfo}>
+                <Text style={styles.taskTitle} numberOfLines={1}>
+                  {draftItem.draft.title}
+                </Text>
+                <Text style={styles.muted}>
+                  Due {new Date(draftItem.draft.dueDate).toLocaleDateString()} • {draftItem.draft.estimatedPomodoros}x Pomodoro • {draftItem.draft.priority.toUpperCase()} priority
+                </Text>
+              </View>
+            </Pressable>
+          ))}
+          <Pressable style={styles.primaryButton} onPress={confirmSelectedDrafts}>
+            <Text style={styles.primaryButtonText}>Add Selected Tasks</Text>
+          </Pressable>
+        </AppCard>
+      ) : null}
 
       <AppCard>
         <Text style={styles.sectionTitle}>Deadline Candidates ({candidates.length})</Text>
@@ -383,6 +545,39 @@ const styles = StyleSheet.create({
     marginTop: 2,
     fontSize: 12,
     fontWeight: '700',
+  },
+  draftRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    gap: spacing.sm,
+    paddingVertical: spacing.sm,
+    borderBottomWidth: 1,
+    borderBottomColor: palette.border,
+  },
+  draftCheck: {
+    width: 22,
+    height: 22,
+    borderRadius: 6,
+    borderWidth: 1,
+    borderColor: palette.border,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: '#FFFFFF',
+  },
+  draftCheckActive: {
+    backgroundColor: palette.primary,
+    borderColor: palette.primary,
+  },
+  draftCheckText: {
+    color: palette.textMuted,
+    fontSize: 12,
+    fontWeight: '700',
+  },
+  draftCheckTextActive: {
+    color: '#FFFFFF',
+  },
+  draftInfo: {
+    flex: 1,
   },
   warningText: {
     color: palette.warning,

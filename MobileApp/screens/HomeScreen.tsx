@@ -1,25 +1,109 @@
-import React from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useEffect, useMemo, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import AppCard from '../src/components/AppCard';
 import { palette, radius, spacing, typography } from '../src/theme/tokens';
 import { StudyBlock, TaskItem } from '../src/types/study';
 
+type LearningGoal = {
+  title: string;
+  targetDate: string;
+};
+
 type Props = {
   tasks: TaskItem[];
   todayPlan: StudyBlock[];
+  goal: LearningGoal;
+  onUpdateGoal: (goal: LearningGoal) => void;
   onOpenScan: () => void;
   onStartFocus: () => void;
 };
 
-export default function HomeScreen({ tasks, todayPlan, onOpenScan, onStartFocus }: Props) {
+export default function HomeScreen({ tasks, todayPlan, goal, onUpdateGoal, onOpenScan, onStartFocus }: Props) {
+  const [goalTitle, setGoalTitle] = useState(goal.title);
+  const [goalDate, setGoalDate] = useState(goal.targetDate);
+
+  useEffect(() => {
+    setGoalTitle(goal.title);
+    setGoalDate(goal.targetDate);
+  }, [goal.title, goal.targetDate]);
+
   const upcoming = tasks
     .filter(task => task.status !== 'done')
     .sort((a, b) => +new Date(a.dueDate) - +new Date(b.dueDate))
     .slice(0, 3);
 
   const completedCount = tasks.filter(task => task.status === 'done').length;
-  const progress = tasks.length === 0 ? 0 : completedCount / tasks.length;
-  const progressWidth = `${Math.round(progress * 100)}%`;
+  const totalPomodorosPlanned = tasks.reduce((sum, task) => sum + task.estimatedPomodoros, 0);
+  const totalPomodorosDone = tasks
+    .filter(task => task.status === 'done')
+    .reduce((sum, task) => sum + task.estimatedPomodoros, 0);
+  const progress = totalPomodorosPlanned === 0 ? 0 : totalPomodorosDone / totalPomodorosPlanned;
+  const progressPercent = Math.round(progress * 100);
+  const progressWidth = `${progressPercent}%`;
+  const plannedHours = totalPomodorosPlanned === 0 ? 0 : (totalPomodorosPlanned * 25) / 60;
+  const completedHours = totalPomodorosDone === 0 ? 0 : (totalPomodorosDone * 25) / 60;
+
+  const goalStats = useMemo(() => {
+    if (!goal.targetDate) {
+      return null;
+    }
+
+    const target = new Date(goal.targetDate);
+    if (Number.isNaN(target.getTime())) {
+      return null;
+    }
+
+    const today = new Date();
+    const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
+    const targetStart = new Date(target.getFullYear(), target.getMonth(), target.getDate());
+    const totalDays = Math.max(1, Math.ceil((targetStart.getTime() - todayStart.getTime()) / 86400000) + 1);
+
+    const remainingPomodoros = tasks
+      .filter(task => task.status !== 'done')
+      .reduce((sum, task) => sum + task.estimatedPomodoros, 0);
+
+    const dailyTarget = totalDays <= 0 ? 0 : Math.max(1, Math.ceil(remainingPomodoros / totalDays));
+
+    const completedToday = tasks
+      .filter(task => task.status === 'done' && task.completedAt)
+      .filter(task => {
+        if (!task.completedAt) {
+          return false;
+        }
+        const completedDate = new Date(task.completedAt);
+        return completedDate >= todayStart && completedDate < new Date(todayStart.getTime() + 86400000);
+      })
+      .reduce((sum, task) => sum + task.estimatedPomodoros, 0);
+
+    const totalPlanned = tasks.reduce((sum, task) => sum + task.estimatedPomodoros, 0);
+    const elapsedDays = Math.max(1, Math.ceil((todayStart.getTime() - Math.min(todayStart.getTime(), targetStart.getTime())) / 86400000) + 1);
+    const expectedByNow = totalPlanned === 0 ? 0 : Math.ceil((totalPlanned / (elapsedDays + totalDays - 1)) * elapsedDays);
+    const behind = totalPomodorosDone < expectedByNow;
+
+    return {
+      totalDays,
+      remainingPomodoros,
+      dailyTarget,
+      completedToday,
+      behind,
+    };
+  }, [goal.targetDate, tasks, totalPomodorosDone]);
+
+  function saveGoal() {
+    const title = goalTitle.trim();
+    const targetDate = goalDate.trim();
+
+    if (!title || !targetDate) {
+      return;
+    }
+
+    const parsed = new Date(targetDate);
+    if (Number.isNaN(parsed.getTime())) {
+      return;
+    }
+
+    onUpdateGoal({ title, targetDate });
+  }
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
@@ -46,16 +130,52 @@ export default function HomeScreen({ tasks, todayPlan, onOpenScan, onStartFocus 
       <AppCard soft>
         <View style={styles.rowSpace}>
           <Text style={styles.sectionTitle}>Weekly Progress</Text>
-          <Text style={styles.plusBadge}>+12%</Text>
+          <Text style={styles.plusBadge}>{progressPercent}%</Text>
         </View>
         <View style={styles.rowSpace}>
-          <Text style={styles.mutedLabel}>Goal: 40 hrs</Text>
-          <Text style={styles.mutedLabel}>32.5 hrs</Text>
+          <Text style={styles.mutedLabel}>Planned: {plannedHours.toFixed(1)} hrs</Text>
+          <Text style={styles.mutedLabel}>Completed: {completedHours.toFixed(1)} hrs</Text>
         </View>
         <View style={styles.progressTrack}>
           <View style={[styles.progressFill, { width: progressWidth }]} />
         </View>
-        <Text style={styles.helperLine}>Your pace is stronger than last week.</Text>
+        <Text style={styles.helperLine}>Based on estimated pomodoros from your tasks.</Text>
+      </AppCard>
+
+      <AppCard>
+        <Text style={styles.sectionTitle}>Goal-Based Learning</Text>
+        <Text style={styles.muted}>Set a learning goal and the app will pace your daily workload.</Text>
+        <TextInput
+          value={goalTitle}
+          onChangeText={setGoalTitle}
+          placeholder="Goal title (e.g. Pass exam in 30 days)"
+          placeholderTextColor={palette.textMuted}
+          style={styles.input}
+        />
+        <TextInput
+          value={goalDate}
+          onChangeText={setGoalDate}
+          placeholder="Target date (YYYY-MM-DD)"
+          placeholderTextColor={palette.textMuted}
+          style={styles.input}
+        />
+        <Pressable style={styles.secondaryButton} onPress={saveGoal}>
+          <Text style={styles.secondaryButtonText}>Save Goal</Text>
+        </Pressable>
+
+        {goal.title && goalStats ? (
+          <View style={styles.goalSummary}>
+            <Text style={styles.goalTitle}>{goal.title}</Text>
+            <Text style={styles.goalMeta}>Days left: {goalStats.totalDays}</Text>
+            <Text style={styles.goalMeta}>Daily target: {goalStats.dailyTarget} pomodoros</Text>
+            <Text style={styles.goalMeta}>Completed today: {goalStats.completedToday}</Text>
+            <Text style={goalStats.behind ? styles.goalBehind : styles.goalOnTrack}>
+              {goalStats.behind ? 'You are behind pace. Daily target recalculated.' : 'You are on track.'}
+            </Text>
+          </View>
+        ) : (
+          <Text style={styles.helperLine}>Add a goal and target date to start tracking.</Text>
+        )}
       </AppCard>
 
       <AppCard soft>
@@ -170,6 +290,59 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '700',
     fontSize: 18,
+  },
+  input: {
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: '#F9FBFF',
+    paddingHorizontal: spacing.md,
+    paddingVertical: 11,
+    color: palette.textStrong,
+    marginBottom: spacing.sm,
+  },
+  secondaryButton: {
+    alignSelf: 'flex-start',
+    borderRadius: radius.md,
+    paddingVertical: 11,
+    paddingHorizontal: 16,
+    backgroundColor: palette.surfaceSoft,
+    borderWidth: 1,
+    borderColor: palette.border,
+    marginBottom: spacing.sm,
+  },
+  secondaryButtonText: {
+    color: palette.primary,
+    fontWeight: '700',
+    fontSize: 15,
+  },
+  goalSummary: {
+    marginTop: spacing.sm,
+    padding: spacing.md,
+    borderRadius: radius.md,
+    backgroundColor: '#F3F7FF',
+    borderWidth: 1,
+    borderColor: palette.border,
+    gap: 4,
+  },
+  goalTitle: {
+    color: palette.textStrong,
+    fontWeight: '700',
+    fontSize: 16,
+  },
+  goalMeta: {
+    color: palette.textMuted,
+    fontSize: 13,
+  },
+  goalBehind: {
+    color: palette.warning,
+    fontWeight: '700',
+    marginTop: 4,
+  },
+  goalOnTrack: {
+    color: palette.primary,
+    fontWeight: '700',
+    marginTop: 4,
   },
   rowSpace: {
     flexDirection: 'row',

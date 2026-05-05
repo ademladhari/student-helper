@@ -1,4 +1,5 @@
 export type TaskStatus = 'draft' | 'todo' | 'in-progress' | 'done';
+export type TaskPriority = 'low' | 'medium' | 'high';
 
 export type TaskItem = {
   id: string;
@@ -7,12 +8,15 @@ export type TaskItem = {
   status: TaskStatus;
   source: 'manual' | 'scan';
   estimatedPomodoros: number;
+  priority: TaskPriority;
+  completedAt?: string;
 };
 
 export type TaskDraftInput = {
   title: string;
   dueDate: string;
   estimatedPomodoros: number;
+  priority: TaskPriority;
 };
 
 export type DeadlineCandidate = {

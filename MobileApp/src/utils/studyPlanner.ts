@@ -39,6 +39,54 @@ function getActiveTasks(tasks: TaskItem[]) {
     .sort((a, b) => +new Date(a.dueDate) - +new Date(b.dueDate));
 }
 
+function toDateKey(date: Date) {
+  const year = date.getFullYear();
+  const month = `${date.getMonth() + 1}`.padStart(2, '0');
+  const day = `${date.getDate()}`.padStart(2, '0');
+  return `${year}-${month}-${day}`;
+}
+
+function parseDateKey(key: string) {
+  const [year, month, day] = key.split('-').map(Number);
+  return new Date(year, month - 1, day, 0, 0, 0, 0);
+}
+
+function calculateDailyStreak(tasks: TaskItem[]) {
+  const doneDates = tasks
+    .filter(task => task.status === 'done' && task.completedAt)
+    .map(task => toDateKey(new Date(task.completedAt as string)));
+
+  const uniqueDates = new Set(doneDates);
+  if (uniqueDates.size === 0) {
+    return 0;
+  }
+
+  const todayKey = toDateKey(new Date());
+  const yesterday = new Date();
+  yesterday.setDate(yesterday.getDate() - 1);
+  const yesterdayKey = toDateKey(yesterday);
+
+  const startKey = uniqueDates.has(todayKey)
+    ? todayKey
+    : uniqueDates.has(yesterdayKey)
+      ? yesterdayKey
+      : null;
+
+  if (!startKey) {
+    return 0;
+  }
+
+  let streak = 0;
+  let cursor = parseDateKey(startKey);
+
+  while (uniqueDates.has(toDateKey(cursor))) {
+    streak += 1;
+    cursor.setDate(cursor.getDate() - 1);
+  }
+
+  return streak;
+}
+
 export function extractDeadlineCandidates(scannedText: string): DeadlineCandidate[] {
   return scannedText
     .split('\n')
@@ -66,6 +114,7 @@ export function convertCandidatesToDraftTasks(candidates: DeadlineCandidate[]): 
     status: 'draft',
     source: 'scan',
     estimatedPomodoros: estimatePomodoros(candidate.sourceSnippet),
+    priority: 'medium',
   }));
 }
 
@@ -114,6 +163,7 @@ export function summarizeStats(tasks: TaskItem[]) {
   const totalPomodorosDone = tasks
     .filter(task => task.status === 'done')
     .reduce((sum, task) => sum + task.estimatedPomodoros, 0);
+  const dailyStreak = calculateDailyStreak(tasks);
 
   return {
     done,
@@ -121,5 +171,6 @@ export function summarizeStats(tasks: TaskItem[]) {
     pending,
     totalPomodorosPlanned,
     totalPomodorosDone,
+    dailyStreak,
   };
 }

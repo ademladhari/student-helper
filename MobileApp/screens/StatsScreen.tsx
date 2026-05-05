@@ -9,6 +9,7 @@ type Props = {
   pending: number;
   totalPomodorosPlanned: number;
   totalPomodorosDone: number;
+  dailyStreak: number;
 };
 
 export default function StatsScreen({
@@ -17,6 +18,7 @@ export default function StatsScreen({
   pending,
   totalPomodorosDone,
   totalPomodorosPlanned,
+  dailyStreak,
 }: Props) {
   const completion = totalPomodorosPlanned === 0 ? 0 : Math.round((totalPomodorosDone / totalPomodorosPlanned) * 100);
 
@@ -54,6 +56,11 @@ export default function StatsScreen({
         <Text style={styles.detail}>
           Planned: {totalPomodorosPlanned} • Completed: {totalPomodorosDone}
         </Text>
+      </AppCard>
+
+      <AppCard>
+        <Text style={styles.metricLabel}>Daily Streak</Text>
+        <Text style={styles.metricValue}>{dailyStreak} day{dailyStreak === 1 ? '' : 's'}</Text>
       </AppCard>
     </ScrollView>
   );

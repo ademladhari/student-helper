@@ -177,6 +177,18 @@ export default function AuthScreen({ onAuthenticated }: Props) {
         {mode === 'signup' ? (
           <TextInput
             value={name}
+
+              <Pressable
+                style={[styles.primaryButton, { backgroundColor: palette.secondary, marginTop: 12 }]}
+                onPress={() =>
+                  onAuthenticated({
+                    user: { id: 'guest', name: 'Guest', email: '' },
+                    token: 'guest-token',
+                  })
+                }
+              >
+                <Text style={[styles.primaryButtonText, { color: palette.textStrong }]}>Enter as Guest</Text>
+              </Pressable>
             onChangeText={setName}
             placeholder="Full name"
             placeholderTextColor={palette.textMuted}
@@ -199,6 +211,7 @@ export default function AuthScreen({ onAuthenticated }: Props) {
           onChangeText={setPassword}
           placeholder="Password"
           placeholderTextColor={palette.textMuted}
+            <View>
           secureTextEntry
           style={styles.input}
         />
@@ -216,11 +229,32 @@ export default function AuthScreen({ onAuthenticated }: Props) {
         </Text>
       </View>
     </ScrollView>
+            </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
+          {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
+
+          <View>
+            <Pressable style={styles.primaryButton} onPress={handleSubmit} disabled={isLoading}>
+              <Text style={styles.primaryButtonText}>
+                {isLoading ? 'Please wait...' : mode === 'signin' ? 'Sign In' : 'Create Account'}
+              </Text>
+            </Pressable>
+            <Pressable
+              style={[styles.primaryButton, { backgroundColor: palette.secondary, marginTop: 12 }]}
+              onPress={() =>
+                onAuthenticated({
+                  user: { id: 'guest', name: 'Guest', email: '' },
+                  token: 'guest-token',
+                })
+              }
+            >
+              <Text style={[styles.primaryButtonText, { color: palette.textStrong }]}>Enter as Guest</Text>
+            </Pressable>
+          </View>
     flexGrow: 1,
     minHeight: '100%',
     paddingHorizontal: spacing.lg,
