@@ -1,6 +1,7 @@
 import cors from "cors";
 import express from "express";
 import authRoutes from "./routes/authRoutes.js";
+import aiRoutes from "./routes/aiRoutes.js";
 import ocrRoutes from "./routes/ocrRoutes.js";
 import studentRoutes from "./routes/studentRoutes.js";
 
@@ -16,6 +17,7 @@ app.get("/api/health", (_req, res) => {
 app.use("/api/students", studentRoutes);
 app.use("/api/auth", authRoutes);
 app.use("/api/ocr", ocrRoutes);
+app.use("/api/ai", aiRoutes);
 
 // Centralized error response for unhandled route/controller errors.
 app.use((err, _req, res, _next) => {

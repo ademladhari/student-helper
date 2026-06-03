@@ -210,5 +210,6 @@ export async function pickFilesFromDevice() {
   return DocumentPicker.pick({
     type: [DocumentPicker.types.allFiles],
     allowMultiSelection: true,
+    copyTo: 'cachesDirectory',
   });
 }

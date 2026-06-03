@@ -9,14 +9,20 @@ import {
   Text,
   View,
 } from 'react-native';
+import Video from 'react-native-video';
 import HomeScreen from './screens/HomeScreen';
 import FocusScreen from './screens/FocusScreen';
+import AuthScreen from './screens/AuthScreen';
 import ScanScreen from './screens/ScanScreen';
 import UtilityScreen from './screens/UtilityScreen';
+import AmbientSoundScreen from './screens/AmbientSoundScreen';
 import FileManagerScreen from './screens/FileManagerScreen';
+import ProfileScreen from './screens/ProfileScreen';
 import StatsScreen from './screens/StatsScreen';
 import TasksScreen from './screens/TasksScreen';
 import { palette, radius, spacing } from './src/theme/tokens';
+import { ambientSounds } from './src/music/ambientSounds';
+import { AmbientState } from './src/types/ambient';
 import { DeadlineCandidate, FocusSessionState, TaskDraftInput, TaskItem } from './src/types/study';
 import {
   buildTodayPlan,
@@ -25,8 +31,8 @@ import {
 } from './src/utils/studyPlanner';
 import { useFileLibrary } from './src/fileLibrary/useFileLibrary';
 
-type TabKey = 'Home' | 'Utility' | 'Tasks' | 'Stats';
-type ScreenRoute = TabKey | 'Focus' | 'FileManager';
+type TabKey = 'Home' | 'Utility' | 'Tasks' | 'Stats' | 'Profile';
+type ScreenRoute = TabKey | 'Focus' | 'FileManager' | 'Ambient';
 
 type AuthUser = {
   id: string;
@@ -39,12 +45,13 @@ type LearningGoal = {
   targetDate: string;
 };
 
-const tabs: TabKey[] = ['Home', 'Utility', 'Tasks', 'Stats'];
+const tabs: TabKey[] = ['Home', 'Utility', 'Tasks', 'Stats', 'Profile'];
 const tabIcons: Record<TabKey, string> = {
   Home: 'H',
   Utility: 'U',
   Tasks: 'T',
   Stats: 'ST',
+  Profile: 'PR',
 };
 
 function createInitialFocusSession(): FocusSessionState {
@@ -65,14 +72,26 @@ function App() {
   const [activeScreen, setActiveScreen] = useState<ScreenRoute>('Home');
   const [tasks, setTasks] = useState<TaskItem[]>([]);
   const [authUser, setAuthUser] = useState<AuthUser>({ id: 'guest', name: 'Guest', email: '' });
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [focusSession, setFocusSession] = useState<FocusSessionState>(() => createInitialFocusSession());
   const [learningGoal, setLearningGoal] = useState<LearningGoal>({ title: '', targetDate: '' });
+  const [ambientState, setAmbientState] = useState<AmbientState>({
+    activeId: null,
+    paused: false,
+    volume: 0.6,
+    syncWithPomodoro: false,
+  });
 
   const stats = useMemo(() => summarizeStats(tasks), [tasks]);
   const todayPlan = useMemo(() => buildTodayPlan(tasks), [tasks]);
   const fileLibrary = useFileLibrary();
-
-  const isAuthenticated = true;
+  const activeAmbientSound = useMemo(
+    () => ambientSounds.find(sound => sound.id === ambientState.activeId) || null,
+    [ambientState.activeId],
+  );
+  const ambientPomodoroPause =
+    ambientState.syncWithPomodoro && (focusSession.phase !== 'focus' || focusSession.isPaused);
+  const ambientPlayerPaused = ambientState.paused || ambientPomodoroPause;
 
   function addTask(input: TaskDraftInput) {
     const title = input.title.trim();
@@ -178,10 +197,20 @@ function App() {
     if (activeScreen === 'FileManager') {
       return <FileManagerScreen onBack={() => goToScreen('Utility')} fileLibrary={fileLibrary} />;
     }
+    if (activeScreen === 'Ambient') {
+      return (
+        <AmbientSoundScreen
+          onBack={() => goToScreen('Utility')}
+          ambientState={ambientState}
+          setAmbientState={setAmbientState}
+        />
+      );
+    }
     if (activeScreen === 'Utility') {
       return (
         <UtilityScreen
           onOpenFileManager={() => goToScreen('FileManager')}
+          onOpenAmbient={() => goToScreen('Ambient')}
           fileLibrary={fileLibrary}
         />
       );
@@ -194,6 +223,15 @@ function App() {
           setFocusSession={setFocusSession}
           onAddTask={addTask}
           onBack={() => goToScreen('Home')}
+          onOpenAmbient={() => goToScreen('Ambient')}
+          onToggleAmbientSync={() =>
+            setAmbientState(current => ({
+              ...current,
+              syncWithPomodoro: !current.syncWithPomodoro,
+            }))
+          }
+          ambientSyncEnabled={ambientState.syncWithPomodoro}
+          ambientHasSelection={Boolean(ambientState.activeId)}
         />
       );
     }
@@ -209,6 +247,16 @@ function App() {
     }
     if (activeScreen === 'Stats') {
       return <StatsScreen {...stats} />;
+    }
+    if (activeScreen === 'Profile') {
+      return (
+        <ProfileScreen
+          user={authUser}
+          onOpenTasks={() => goToScreen('Tasks')}
+          onOpenStats={() => goToScreen('Stats')}
+          onSignOut={signOut}
+        />
+      );
     }
     return (
       <HomeScreen
@@ -233,42 +281,58 @@ function App() {
     stats,
     tasks,
     todayPlan,
+    ambientState.activeId,
+    ambientState.syncWithPomodoro,
   ]);
 
   function signOut() {
-    setAuthUser(null);
+    setAuthUser({ id: 'guest', name: 'Guest', email: '' });
+    setIsAuthenticated(false);
     setActiveScreen('Home');
     setFocusSession(createInitialFocusSession());
+  }
+
+  function handleAuthenticated(result: { user: AuthUser; token: string }) {
+    setAuthUser(result.user);
+    setIsAuthenticated(true);
+    setActiveScreen('Home');
+  }
+
+  if (!isAuthenticated) {
+    return (
+      <SafeAreaView style={styles.container}>
+        <StatusBar barStyle="dark-content" backgroundColor={palette.background} />
+        <AuthScreen onAuthenticated={handleAuthenticated} />
+      </SafeAreaView>
+    );
   }
 
   return (
     <SafeAreaView style={styles.container}>
       <StatusBar barStyle="dark-content" backgroundColor={palette.background} />
 
-      {isAuthenticated ? (
-        <View style={styles.header}>
+      <View style={styles.header}>
         <View style={styles.userRow}>
           <View style={styles.avatar}>
-            <Text style={styles.avatarText}>{authUser ? authUser.name.slice(0, 2).toUpperCase() : 'AL'}</Text>
+            <Text style={styles.avatarText}>{authUser.name.slice(0, 2).toUpperCase()}</Text>
           </View>
           <View>
             <Text style={styles.brand}>SmartStudy</Text>
-            <Text style={styles.userEmail}>{authUser?.email}</Text>
+            <Text style={styles.userEmail}>{authUser.email}</Text>
           </View>
         </View>
-        <Pressable style={styles.settingsPill} onPress={signOut}>
-          <Text style={styles.settingsText}>Out</Text>
+        <Pressable style={styles.settingsPill} onPress={() => goToScreen('Profile')}>
+          <Text style={styles.settingsText}>Me</Text>
         </Pressable>
       </View>
-      ) : null}
 
       <View style={styles.content}>{ScreenComponent}</View>
 
-      {isAuthenticated ? (
-        <View style={styles.tabBar}>
+      <View style={styles.tabBar}>
         {tabs.map(tab => {
           const isActive =
-            tab === activeScreen || (tab === 'Utility' && activeScreen === 'FileManager');
+            tab === activeScreen ||
+            (tab === 'Utility' && (activeScreen === 'FileManager' || activeScreen === 'Ambient'));
           return (
             <Pressable
               key={tab}
@@ -283,13 +347,26 @@ function App() {
             </Pressable>
           );
         })}
-        </View>
-      ) : null}
+      </View>
 
-      {isAuthenticated && activeScreen === 'Home' ? (
+      {activeScreen === 'Home' ? (
         <Pressable style={styles.fab} onPress={() => goToScreen('Tasks')}>
           <Text style={styles.fabText}>+</Text>
         </Pressable>
+      ) : null}
+
+      {activeAmbientSound ? (
+        <Video
+          source={activeAmbientSound.source}
+          paused={ambientPlayerPaused}
+          volume={ambientState.volume}
+          repeat
+          audioOnly
+          playInBackground
+          playWhenInactive
+          ignoreSilentSwitch="ignore"
+          style={styles.ambientPlayer}
+        />
       ) : null}
     </SafeAreaView>
   );
@@ -431,6 +508,10 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontSize: 24,
     marginTop: -2,
+  },
+  ambientPlayer: {
+    width: 0,
+    height: 0,
   },
 });
 

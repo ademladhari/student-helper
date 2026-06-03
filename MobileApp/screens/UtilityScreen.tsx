@@ -11,37 +11,95 @@ import {
 import AppCard from '../src/components/AppCard';
 import { isDocumentFile, type FileLibraryApi } from '../src/fileLibrary/useFileLibrary';
 import { palette, radius, spacing, typography } from '../src/theme/tokens';
-import {
-  buildLibraryContextForAi,
-  fetchLibraryAiInsights,
-} from '../src/utils/libraryGemini';
+import { fetchWithTimeout, probeBackend, readResponseBody } from '../src/utils/backend';
 
 type Props = {
   onOpenFileManager: () => void;
+  onOpenAmbient: () => void;
   fileLibrary: Pick<FileLibraryApi, 'hydrated' | 'filesByFolder'>;
 };
 
-export default function UtilityScreen({ onOpenFileManager, fileLibrary }: Props) {
+const SUPPORTED_AI_TYPES = ['application/pdf', 'image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
+const IMAGE_AI_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'image/heic', 'image/heif'];
+
+function isAiSupportedFile(file: { name?: string | null; type?: string | null }) {
+  const type = (file.type || '').toLowerCase();
+  if (SUPPORTED_AI_TYPES.includes(type)) {
+    return true;
+  }
+
+  const name = (file.name || '').toLowerCase();
+  return name.endsWith('.pdf') || name.endsWith('.png') || name.endsWith('.jpg') || name.endsWith('.jpeg') || name.endsWith('.webp') || name.endsWith('.heic') || name.endsWith('.heif');
+}
+
+function isAiImageFile(file: { name?: string | null; type?: string | null }) {
+  const type = (file.type || '').toLowerCase();
+  if (IMAGE_AI_TYPES.includes(type)) {
+    return true;
+  }
+
+  const name = (file.name || '').toLowerCase();
+  return name.endsWith('.png') || name.endsWith('.jpg') || name.endsWith('.jpeg') || name.endsWith('.webp') || name.endsWith('.heic') || name.endsWith('.heif');
+}
+
+function guessMimeType(name: string) {
+  const lower = name.toLowerCase();
+  if (lower.endsWith('.pdf')) {
+    return 'application/pdf';
+  }
+  if (lower.endsWith('.png')) {
+    return 'image/png';
+  }
+  if (lower.endsWith('.webp')) {
+    return 'image/webp';
+  }
+  if (lower.endsWith('.heic')) {
+    return 'image/heic';
+  }
+  if (lower.endsWith('.heif')) {
+    return 'image/heif';
+  }
+  return 'image/jpeg';
+}
+
+function buildAiFormData(files: Array<{ uri: string; fileCopyUri?: string | null; name?: string | null; displayName?: string | null; type?: string | null }>) {
+  const formData = new FormData();
+  files.forEach((file, index) => {
+    const fileName = file.name || file.displayName || `file-${index}`;
+    const type = file.type || guessMimeType(fileName);
+    const uri = file.fileCopyUri || file.uri;
+    formData.append('files', {
+      uri,
+      name: fileName,
+      type,
+    } as never);
+  });
+  return formData;
+}
+
+export default function UtilityScreen({ onOpenFileManager, onOpenAmbient, fileLibrary }: Props) {
   const { hydrated, filesByFolder } = fileLibrary;
 
   const [aiLoading, setAiLoading] = useState(false);
   const [aiSummary, setAiSummary] = useState('');
   const [aiExplanation, setAiExplanation] = useState('');
+  const [aiDebugUrl, setAiDebugUrl] = useState('');
+  const [aiDebugError, setAiDebugError] = useState('');
 
   const totalFiles = useMemo(
     () => filesByFolder.reduce((n, folder) => n + folder.files.length, 0),
     [filesByFolder],
   );
 
-  const foldersForAi = useMemo(() => {
-    return filesByFolder.map(folder => ({
-      name: folder.name,
-      files: folder.files.map(file => ({
-        title: file.displayName || file.name || 'Untitled file',
-        kindHint: isDocumentFile(file) ? 'document-like' : 'other',
-      })),
-    }));
-  }, [filesByFolder]);
+  const supportedFiles = useMemo(
+    () => filesByFolder.flatMap(folder => folder.files.filter(file => isAiSupportedFile(file))),
+    [filesByFolder],
+  );
+
+  const supportedImages = useMemo(
+    () => supportedFiles.filter(file => isAiImageFile(file)),
+    [supportedFiles],
+  );
 
   const libraryFingerprint = useMemo(
     () =>
@@ -61,15 +119,67 @@ export default function UtilityScreen({ onOpenFileManager, fileLibrary }: Props)
       return;
     }
 
+    if (supportedImages.length === 0) {
+      Alert.alert('AI insights', 'Add at least one image file to run the AI summary.');
+      return;
+    }
+
+    if (__DEV__) {
+      console.log('[AI] Library insights: starting', {
+        totalFiles,
+        folders: filesByFolder.length,
+      });
+    }
+
     setAiLoading(true);
+    setAiDebugError('');
 
     try {
-      const context = buildLibraryContextForAi(foldersForAi);
-      const { summary, explanation } = await fetchLibraryAiInsights(context);
+      const baseUrl = await probeBackend();
+      const endpoint = `${baseUrl}/api/ai/summary`;
+      setAiDebugUrl(endpoint);
+      const firstImage = supportedImages[0];
+      const formData = buildAiFormData([firstImage]);
+
+      const response = await fetchWithTimeout(
+        endpoint,
+        {
+          method: 'POST',
+          body: formData,
+        },
+        120000,
+      );
+
+      const payload = await readResponseBody(response);
+
+      if (!response.ok) {
+        const message =
+          typeof payload === 'string'
+            ? payload
+            : payload?.detail || payload?.message || 'AI summary failed';
+        throw new Error(message);
+      }
+
+      const summary = typeof payload === 'string' ? '' : payload?.summary || '';
+      const explanation = typeof payload === 'string' ? '' : payload?.explanation || '';
+      if (!summary && !explanation) {
+        throw new Error('AI summary returned empty output.');
+      }
+
       setAiSummary(summary);
       setAiExplanation(explanation);
+      if (__DEV__) {
+        console.log('[AI] Library insights: success', {
+          summaryLength: summary.length,
+          explanationLength: explanation.length,
+        });
+      }
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Could not load AI insights.';
+      setAiDebugError(message);
+      if (__DEV__) {
+        console.log('[AI] Library insights: failed', { message });
+      }
       Alert.alert('AI insights', message);
     } finally {
       setAiLoading(false);
@@ -86,12 +196,35 @@ export default function UtilityScreen({ onOpenFileManager, fileLibrary }: Props)
         </Text>
       </AppCard>
 
+      <AppCard>
+        <View style={styles.rowSpace}>
+          <View style={styles.titleBlock}>
+            <Text style={styles.sectionTitle}>Ambient soundscapes</Text>
+            <Text style={styles.sectionBody}>
+              Lo-fi, rain, or cafe atmospheres with their own player and volume controls.
+            </Text>
+          </View>
+          <Pressable style={styles.secondaryButton} onPress={onOpenAmbient}>
+            <Text style={styles.secondaryButtonText}>Open player</Text>
+          </Pressable>
+        </View>
+      </AppCard>
+
       {hydrated ? (
         <AppCard>
           <Text style={styles.aiCardTitle}>AI library insights</Text>
           <Text style={styles.aiCardHint}>
-            Summary and study tips based on folder and file names only—your documents are never uploaded or read.
+            Summary and study tips based on PDF or image content you upload for analysis.
           </Text>
+          {aiDebugUrl ? (
+            <View style={styles.aiDebugBox}>
+              <Text style={styles.aiDebugLabel}>Debug endpoint</Text>
+              <Text style={styles.aiDebugValue}>{aiDebugUrl}</Text>
+              {aiDebugError ? (
+                <Text style={styles.aiDebugError}>Last error: {aiDebugError}</Text>
+              ) : null}
+            </View>
+          ) : null}
           <Pressable
             style={[styles.aiButton, totalFiles === 0 && styles.aiButtonDisabled]}
             onPress={runLibraryInsights}
@@ -248,6 +381,32 @@ const styles = StyleSheet.create({
     paddingTop: spacing.md,
     borderTopWidth: 1,
     borderTopColor: palette.border,
+  },
+  aiDebugBox: {
+    marginTop: spacing.sm,
+    marginBottom: spacing.sm,
+    padding: spacing.sm,
+    backgroundColor: '#F7F8FA',
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: palette.border,
+  },
+  aiDebugLabel: {
+    fontSize: 11,
+    fontWeight: '700',
+    color: palette.textMuted,
+    marginBottom: 4,
+    textTransform: 'uppercase',
+    letterSpacing: 0.4,
+  },
+  aiDebugValue: {
+    color: palette.textStrong,
+    fontSize: 12,
+  },
+  aiDebugError: {
+    marginTop: 6,
+    color: palette.warning,
+    fontSize: 12,
   },
   aiOutputLabel: {
     fontSize: 12,

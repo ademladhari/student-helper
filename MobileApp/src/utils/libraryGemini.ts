@@ -42,7 +42,7 @@ export function buildLibraryContextForAi(folders: LibraryFolderForAi[]): string 
 
 export async function fetchLibraryAiInsights(context: string): Promise<{ summary: string; explanation: string }> {
   if (!GEMINI_API_KEY || GEMINI_API_KEY.includes('REPLACE_WITH')) {
-    throw new Error('Add your Gemini API key in src/config/gemini.ts.');
+    throw new Error('Set GEMINI_API_KEY in MobileApp/.env to enable AI insights.');
   }
 
   const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;

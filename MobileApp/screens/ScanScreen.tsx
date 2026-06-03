@@ -18,66 +18,13 @@ import { palette, radius, spacing, typography } from '../src/theme/tokens';
 import { DeadlineCandidate, TaskDraftInput } from '../src/types/study';
 import { GEMINI_API_KEY, GEMINI_MODEL } from '../src/config/gemini';
 import { extractDeadlineCandidates } from '../src/utils/studyPlanner';
+import { getBackendBaseUrls, probeBackend, fetchWithTimeout, readResponseBody } from '../src/utils/backend';
 
 type Props = {
   onCreateDrafts: (candidates: DeadlineCandidate[]) => void;
   onCreateAiDrafts: (drafts: TaskDraftInput[]) => void;
 };
 
-const BACKEND_BASE_URLS =
-  Platform.OS === 'android'
-    ? ['http://192.168.1.23:5000', 'http://127.0.0.1:5000', 'http://localhost:5000', 'http://10.0.2.2:5000']
-    : ['http://localhost:5000'];
-
-async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    return await fetch(url, {
-      ...options,
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
-
-async function readResponseBody(response: Response) {
-  const contentType = response.headers.get('content-type') || '';
-
-  if (contentType.includes('application/json')) {
-    return response.json();
-  }
-
-  return response.text();
-}
-
-async function probeBackend() {
-  const errors: string[] = [];
-
-  for (const baseUrl of BACKEND_BASE_URLS) {
-    const endpoint = `${baseUrl}/api/health`;
-
-    try {
-      const response = await fetchWithTimeout(endpoint, { method: 'GET' }, 5000);
-
-      if (response.ok) {
-        return baseUrl;
-      }
-
-      const body = await readResponseBody(response);
-      errors.push(
-        `${endpoint} -> ${response.status} (${typeof body === 'string' ? body : JSON.stringify(body)})`,
-      );
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'Unknown network error';
-      errors.push(`${endpoint} -> ${message}`);
-    }
-  }
-
-  throw new Error(`Unable to reach backend. Tried: ${errors.join(' | ')}`);
-}
 
 async function requestAndroidCameraPermission() {
   if (Platform.OS !== 'android') {
@@ -157,13 +104,21 @@ export default function ScanScreen({ onCreateDrafts, onCreateAiDrafts }: Props) 
   }
 
   async function generateAiDrafts() {
+    if (__DEV__) {
+      console.log('[AI] Generate drafts: env check', {
+        hasKey: !!GEMINI_API_KEY,
+        keyLength: GEMINI_API_KEY?.length ?? 0,
+        model: GEMINI_MODEL,
+      });
+    }
+
     if (!scannedText.trim()) {
       Alert.alert('Missing text', 'Scan or paste text before generating AI tasks.');
       return;
     }
 
     if (!GEMINI_API_KEY || GEMINI_API_KEY.includes('REPLACE_WITH')) {
-      Alert.alert('Gemini not configured', 'Add your Gemini API key in src/config/gemini.ts.');
+      Alert.alert('Gemini not configured', 'Set GEMINI_API_KEY in MobileApp/.env to use Gemini.');
       return;
     }
 
@@ -171,6 +126,9 @@ export default function ScanScreen({ onCreateDrafts, onCreateAiDrafts }: Props) 
 
     try {
       const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+      if (__DEV__) {
+        console.log('[AI] Gemini request', { model: GEMINI_MODEL, endpointHost: 'generativelanguage.googleapis.com' });
+      }
       const prompt = `You are a study assistant. Convert the OCR text into a concise JSON array of task drafts.\n\nRules:\n- Output ONLY valid JSON (no markdown).\n- Each item must have: title, dueDate (ISO 8601), estimatedMinutes (number), priority (low|medium|high).\n- If no due date is in text, use today's date.\n- Estimated minutes should be realistic (15-240).\n\nOCR text:\n${scannedText}`;
 
       const response = await fetch(endpoint, {
@@ -249,7 +207,7 @@ export default function ScanScreen({ onCreateDrafts, onCreateAiDrafts }: Props) 
   async function openCameraAndExtract() {
     try {
       console.log('[OCR] Starting capture flow', {
-        baseUrls: BACKEND_BASE_URLS,
+        baseUrls: getBackendBaseUrls(),
         platform: Platform.OS,
       });
 
@@ -296,7 +254,7 @@ export default function ScanScreen({ onCreateDrafts, onCreateAiDrafts }: Props) 
       } catch (probeError) {
         const message = probeError instanceof Error ? probeError.message : 'Backend is not reachable.';
         console.error('[OCR] Backend probe failed', {
-          baseUrls: BACKEND_BASE_URLS,
+          baseUrls: getBackendBaseUrls(),
           error: message,
         });
         throw new Error(`Backend connection failed before OCR upload: ${message}`);

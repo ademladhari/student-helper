@@ -10,6 +10,10 @@ type Props = {
   setFocusSession: React.Dispatch<React.SetStateAction<FocusSessionState>>;
   onAddTask: (task: TaskDraftInput) => TaskItem | void;
   onBack: () => void;
+  onOpenAmbient: () => void;
+  onToggleAmbientSync: () => void;
+  ambientSyncEnabled: boolean;
+  ambientHasSelection: boolean;
 };
 
 const sessionOptions = [25, 90] as const;
@@ -29,7 +33,17 @@ function formatTime(totalSeconds: number) {
   return `${minutes}:${seconds}`;
 }
 
-export default function FocusScreen({ tasks, focusSession, setFocusSession, onAddTask, onBack }: Props) {
+export default function FocusScreen({
+  tasks,
+  focusSession,
+  setFocusSession,
+  onAddTask,
+  onBack,
+  onOpenAmbient,
+  onToggleAmbientSync,
+  ambientSyncEnabled,
+  ambientHasSelection,
+}: Props) {
   const {
     sessionMinutes,
     secondsLeft,
@@ -208,6 +222,14 @@ export default function FocusScreen({ tasks, focusSession, setFocusSession, onAd
       : `${BREAK_MINUTES_BY_SESSION[sessionMinutes]}m pause`;
   }
 
+  function handleAmbientToggle() {
+    const nextEnabled = !ambientSyncEnabled;
+    onToggleAmbientSync();
+    if (nextEnabled && !ambientHasSelection) {
+      onOpenAmbient();
+    }
+  }
+
   return (
     <ScrollView contentContainerStyle={styles.container}>
       <AppCard soft>
@@ -257,6 +279,23 @@ export default function FocusScreen({ tasks, focusSession, setFocusSession, onAd
           </Pressable>
           <Pressable style={styles.secondaryButton} onPress={resetTimer}>
             <Text style={styles.secondaryButtonText}>Restart</Text>
+          </Pressable>
+        </View>
+
+        <View style={styles.musicRow}>
+          <Pressable
+            style={[styles.secondaryButton, ambientSyncEnabled && styles.secondaryButtonActive]}
+            onPress={handleAmbientToggle}>
+            <Text
+              style={[
+                styles.secondaryButtonText,
+                ambientSyncEnabled && styles.secondaryButtonTextActive,
+              ]}>
+              {ambientSyncEnabled ? 'Music linked' : 'Add music'}
+            </Text>
+          </Pressable>
+          <Pressable style={styles.secondaryButton} onPress={onOpenAmbient}>
+            <Text style={styles.secondaryButtonText}>Open player</Text>
           </Pressable>
         </View>
 
@@ -465,6 +504,11 @@ const styles = StyleSheet.create({
     gap: spacing.sm,
     marginBottom: spacing.sm,
   },
+  musicRow: {
+    flexDirection: 'row',
+    gap: spacing.sm,
+    marginBottom: spacing.md,
+  },
   secondaryButton: {
     flex: 1,
     borderRadius: radius.md,
@@ -474,10 +518,17 @@ const styles = StyleSheet.create({
     paddingVertical: 14,
     alignItems: 'center',
   },
+  secondaryButtonActive: {
+    backgroundColor: palette.primary,
+    borderColor: palette.primary,
+  },
   secondaryButtonText: {
     color: palette.primary,
     fontWeight: '700',
     fontSize: 14,
+  },
+  secondaryButtonTextActive: {
+    color: '#FFFFFF',
   },
   primaryButton: {
     borderRadius: radius.md,

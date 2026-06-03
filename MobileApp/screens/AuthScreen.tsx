@@ -8,7 +8,7 @@ import {
   TextInput,
   View,
 } from 'react-native';
-import { palette, radius, spacing, typography } from '../src/theme/tokens';
+import { palette, radius, spacing } from '../src/theme/tokens';
 
 type AuthMode = 'signin' | 'signup';
 
@@ -28,7 +28,7 @@ type Props = {
 };
 
 const BACKEND_BASE_URLS =
-  (typeof navigator !== 'undefined' && navigator.product === 'ReactNative')
+  typeof navigator !== 'undefined' && navigator.product === 'ReactNative'
     ? ['http://10.0.2.2:5000', 'http://localhost:5000', 'http://127.0.0.1:5000']
     : ['http://localhost:5000'];
 
@@ -69,7 +69,7 @@ async function probeBackend() {
     }
   }
 
-  throw new Error('Unable to reach the backend. Make sure the API is running.');
+  return null;
 }
 
 export default function AuthScreen({ onAuthenticated }: Props) {
@@ -82,7 +82,7 @@ export default function AuthScreen({ onAuthenticated }: Props) {
 
   const title = useMemo(() => (mode === 'signin' ? 'Welcome back' : 'Create your account'), [mode]);
 
-  async function handleSubmit() {
+  async function submitAuth() {
     const trimmedEmail = email.trim().toLowerCase();
 
     if (!trimmedEmail || !password.trim()) {
@@ -100,6 +100,11 @@ export default function AuthScreen({ onAuthenticated }: Props) {
 
     try {
       const baseUrl = await probeBackend();
+
+      if (!baseUrl) {
+        throw new Error('Unable to reach the backend. Make sure the API is running.');
+      }
+
       const response = await fetchWithTimeout(
         `${baseUrl}/api/auth/${mode}`,
         {
@@ -127,32 +132,25 @@ export default function AuthScreen({ onAuthenticated }: Props) {
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Authentication failed';
       setErrorMessage(message);
-      Alert.alert('Sign in error', message);
+      Alert.alert('Authentication error', message);
     } finally {
       setIsLoading(false);
     }
   }
 
+  function useGuestMode() {
+    onAuthenticated({
+      user: { id: 'guest', name: 'Guest', email: '' },
+      token: 'guest-token',
+    });
+  }
+
   return (
     <ScrollView contentContainerStyle={styles.container}>
-      <View style={styles.backgroundBlobLarge} />
-      <View style={styles.backgroundBlobSmall} />
-
       <View style={styles.heroWrap}>
         <Text style={styles.brand}>SmartStudy</Text>
         <Text style={styles.heroTitle}>Study smarter.</Text>
         <Text style={styles.heroText}>Sign in or sign up to continue.</Text>
-        <View style={styles.heroPills}>
-          <View style={styles.heroPill}>
-            <Text style={styles.heroPillText}>Tasks</Text>
-          </View>
-          <View style={styles.heroPill}>
-            <Text style={styles.heroPillText}>Focus</Text>
-          </View>
-          <View style={styles.heroPill}>
-            <Text style={styles.heroPillText}>OCR</Text>
-          </View>
-        </View>
       </View>
 
       <View style={styles.panel}>
@@ -177,18 +175,6 @@ export default function AuthScreen({ onAuthenticated }: Props) {
         {mode === 'signup' ? (
           <TextInput
             value={name}
-
-              <Pressable
-                style={[styles.primaryButton, { backgroundColor: palette.secondary, marginTop: 12 }]}
-                onPress={() =>
-                  onAuthenticated({
-                    user: { id: 'guest', name: 'Guest', email: '' },
-                    token: 'guest-token',
-                  })
-                }
-              >
-                <Text style={[styles.primaryButtonText, { color: palette.textStrong }]}>Enter as Guest</Text>
-              </Pressable>
             onChangeText={setName}
             placeholder="Full name"
             placeholderTextColor={palette.textMuted}
@@ -211,210 +197,142 @@ export default function AuthScreen({ onAuthenticated }: Props) {
           onChangeText={setPassword}
           placeholder="Password"
           placeholderTextColor={palette.textMuted}
-            <View>
           secureTextEntry
           style={styles.input}
         />
 
         {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
 
-        <Pressable style={styles.primaryButton} onPress={handleSubmit} disabled={isLoading}>
+        <Pressable style={styles.primaryButton} onPress={submitAuth} disabled={isLoading}>
           <Text style={styles.primaryButtonText}>
             {isLoading ? 'Please wait...' : mode === 'signin' ? 'Sign In' : 'Create Account'}
           </Text>
         </Pressable>
 
-        <Text style={styles.footerText}>
-          A cleaner start for your study sessions.
-        </Text>
+        <Pressable
+          style={[styles.secondaryButton, { marginTop: 12 }]}
+          onPress={useGuestMode}
+          disabled={isLoading}>
+          <Text style={styles.secondaryButtonText}>Enter as Guest</Text>
+        </Pressable>
       </View>
     </ScrollView>
-            </View>
   );
 }
 
 const styles = StyleSheet.create({
   container: {
-          {errorMessage ? <Text style={styles.errorText}>{errorMessage}</Text> : null}
-
-          <View>
-            <Pressable style={styles.primaryButton} onPress={handleSubmit} disabled={isLoading}>
-              <Text style={styles.primaryButtonText}>
-                {isLoading ? 'Please wait...' : mode === 'signin' ? 'Sign In' : 'Create Account'}
-              </Text>
-            </Pressable>
-            <Pressable
-              style={[styles.primaryButton, { backgroundColor: palette.secondary, marginTop: 12 }]}
-              onPress={() =>
-                onAuthenticated({
-                  user: { id: 'guest', name: 'Guest', email: '' },
-                  token: 'guest-token',
-                })
-              }
-            >
-              <Text style={[styles.primaryButtonText, { color: palette.textStrong }]}>Enter as Guest</Text>
-            </Pressable>
-          </View>
     flexGrow: 1,
     minHeight: '100%',
     paddingHorizontal: spacing.lg,
     paddingTop: spacing.xl,
     paddingBottom: spacing.xxl,
-    position: 'relative',
-    overflow: 'hidden',
-    justifyContent: 'space-between',
+    backgroundColor: palette.background,
   },
   heroWrap: {
-    marginTop: spacing.sm,
-    marginBottom: spacing.md,
+    marginBottom: spacing.lg,
   },
   brand: {
+    fontSize: 18,
+    fontWeight: '800',
+    letterSpacing: -0.6,
     color: palette.primary,
-    fontSize: 14,
-    fontWeight: '700',
-    letterSpacing: 1.4,
-    textTransform: 'uppercase',
     marginBottom: spacing.sm,
   },
   heroTitle: {
+    fontSize: 46,
+    lineHeight: 52,
+    fontWeight: '800',
+    letterSpacing: -1.2,
     color: palette.textStrong,
-    fontSize: 52,
-    lineHeight: 54,
-    fontWeight: '700',
-    letterSpacing: -1.6,
     marginBottom: spacing.sm,
   },
   heroText: {
+    fontSize: 16,
+    lineHeight: 24,
     color: palette.textMuted,
-    fontSize: 17,
-    lineHeight: 25,
-    maxWidth: 320,
-  },
-  heroPills: {
-    flexDirection: 'row',
-    gap: spacing.sm,
-    marginTop: spacing.md,
-    flexWrap: 'wrap',
-  },
-  heroPill: {
-    borderRadius: radius.round,
-    backgroundColor: 'rgba(255,255,255,0.55)',
-    borderWidth: 1,
-    borderColor: 'rgba(72,97,216,0.14)',
-    paddingVertical: 8,
-    paddingHorizontal: 14,
-  },
-  heroPillText: {
-    color: palette.primary,
-    fontSize: 12,
-    fontWeight: '700',
-    letterSpacing: 0.8,
-    textTransform: 'uppercase',
   },
   panel: {
     backgroundColor: palette.surface,
     borderRadius: radius.xl,
-    padding: spacing.xl,
+    padding: spacing.lg,
     borderWidth: 1,
     borderColor: palette.border,
     shadowColor: palette.shadow,
-    shadowOpacity: 0.18,
-    shadowRadius: 18,
-    shadowOffset: { width: 0, height: 12 },
-    elevation: 4,
-    marginTop: spacing.md,
-    minHeight: '68%',
-    justifyContent: 'center',
+    shadowOpacity: 0.15,
+    shadowRadius: 14,
+    shadowOffset: { width: 0, height: 10 },
+    elevation: 3,
   },
   toggleRow: {
     flexDirection: 'row',
-    gap: spacing.sm,
-    marginBottom: spacing.md,
+    backgroundColor: palette.surfaceSoft,
+    borderRadius: radius.round,
+    padding: 4,
+    marginBottom: spacing.lg,
   },
   toggleButton: {
     flex: 1,
-    borderRadius: radius.round,
-    borderWidth: 1,
-    borderColor: palette.border,
-    backgroundColor: palette.surface,
-    paddingVertical: 16,
     alignItems: 'center',
+    paddingVertical: 12,
+    borderRadius: radius.round,
   },
   toggleButtonActive: {
-    backgroundColor: palette.primary,
-    borderColor: palette.primary,
+    backgroundColor: palette.surface,
   },
   toggleText: {
-    color: palette.primary,
+    color: palette.textMuted,
     fontWeight: '700',
-    fontSize: 15,
   },
   toggleTextActive: {
-    color: '#FFFFFF',
+    color: palette.primary,
   },
   formTitle: {
-    fontSize: 32,
-    lineHeight: 36,
-    fontWeight: '700',
+    fontSize: 24,
+    fontWeight: '800',
     color: palette.textStrong,
-    marginBottom: spacing.xs,
+    marginBottom: 6,
   },
   formSubtitle: {
+    fontSize: 14,
     color: palette.textMuted,
-    fontSize: 15,
-    lineHeight: 22,
-    marginBottom: spacing.lg,
+    marginBottom: spacing.md,
   },
   input: {
-    borderRadius: radius.lg,
+    borderRadius: radius.md,
     borderWidth: 1,
     borderColor: palette.border,
-    backgroundColor: '#F9FBFF',
-    paddingHorizontal: spacing.md,
-    paddingVertical: 17,
+    backgroundColor: palette.surfaceMuted,
+    paddingHorizontal: 14,
+    paddingVertical: 12,
+    fontSize: 15,
     color: palette.textStrong,
-    marginBottom: spacing.md,
-    fontSize: 16,
+    marginBottom: spacing.sm,
   },
   errorText: {
     color: palette.danger,
-    fontSize: 13,
     marginBottom: spacing.sm,
+    fontSize: 13,
   },
   primaryButton: {
+    borderRadius: radius.md,
     backgroundColor: palette.primary,
-    borderRadius: radius.lg,
-    paddingVertical: 17,
+    paddingVertical: 14,
     alignItems: 'center',
     marginTop: spacing.xs,
   },
   primaryButtonText: {
     color: '#FFFFFF',
-    fontWeight: '700',
-    fontSize: 17,
+    fontWeight: '800',
   },
-  footerText: {
-    marginTop: spacing.lg,
-    color: palette.textMuted,
-    fontSize: 13,
-    textAlign: 'center',
+  secondaryButton: {
+    borderRadius: radius.md,
+    backgroundColor: palette.surfaceMuted,
+    paddingVertical: 14,
+    alignItems: 'center',
   },
-  backgroundBlobLarge: {
-    position: 'absolute',
-    top: -70,
-    right: -50,
-    width: 220,
-    height: 220,
-    borderRadius: 110,
-    backgroundColor: 'rgba(72,97,216,0.14)',
-  },
-  backgroundBlobSmall: {
-    position: 'absolute',
-    top: 120,
-    left: -30,
-    width: 120,
-    height: 120,
-    borderRadius: 60,
-    backgroundColor: 'rgba(35,184,154,0.12)',
+  secondaryButtonText: {
+    color: palette.textStrong,
+    fontWeight: '800',
   },
 });

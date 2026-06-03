@@ -22,6 +22,7 @@
     "ocrad.js": "^0.0.1",
     "onnxruntime-node": "^1.24.3",
     "paddleocr": "^1.1.1",
+    "pdf-parse": "^1.1.1",
     "sharp": "^0.34.5",
     "tesseract.js": "^7.0.0"
   },
