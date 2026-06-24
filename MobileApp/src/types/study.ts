@@ -50,4 +50,14 @@ export type FocusSessionState = {
   blockTasks: FocusBlockTask[];
   quickTaskTitle: string;
   quickTaskPomodoros: string;
+  appBlockingEnabled: boolean;
+  showAppBlockerPicker: boolean;
+  /** Wall-clock end time for the current segment; null when paused. */
+  timerEndsAt: number | null;
+};
+
+export type LearningGoal = {
+  title: string;
+  targetTaskCount: number;
+  targetDate: string;
 };

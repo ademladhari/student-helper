@@ -1,3 +1,4 @@
 <resources>
     <string name="app_name">MobileApp</string>
+    <string name="accessibility_service_description">SmartStudy uses accessibility to detect when a blocked app opens during a focus session and redirect you back to studying.</string>
 </resources>

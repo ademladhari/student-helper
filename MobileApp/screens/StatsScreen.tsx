@@ -1,7 +1,8 @@
-import React from 'react';
+import React, { useMemo } from 'react';
 import { ScrollView, StyleSheet, Text, View } from 'react-native';
 import AppCard from '../src/components/AppCard';
 import { palette, radius, spacing, typography } from '../src/theme/tokens';
+import { LearningGoal, TaskItem } from '../src/types/study';
 
 type Props = {
   done: number;
@@ -10,6 +11,8 @@ type Props = {
   totalPomodorosPlanned: number;
   totalPomodorosDone: number;
   dailyStreak: number;
+  goal: LearningGoal;
+  tasks: TaskItem[];
 };
 
 export default function StatsScreen({
@@ -19,15 +22,29 @@ export default function StatsScreen({
   totalPomodorosDone,
   totalPomodorosPlanned,
   dailyStreak,
+  goal,
+  tasks,
 }: Props) {
   const completion =
     totalPomodorosPlanned === 0 ? 0 : Math.round((totalPomodorosDone / totalPomodorosPlanned) * 100);
   const totalTasks = done + pending + drafts;
-  const taskCompletion = totalTasks === 0 ? 0 : Math.round((done / totalTasks) * 100);
   const weekDays = ['M', 'T', 'W', 'T', 'F', 'S', 'S'];
   const streakTarget = 7;
   const streakProgress = Math.min(dailyStreak, streakTarget);
   const streakPercent = Math.round((streakProgress / streakTarget) * 100);
+
+  const goalSummary = useMemo(() => {
+    if (!goal.title || !goal.targetTaskCount) {
+      return 'No goal set';
+    }
+
+    const completedTowardGoal = tasks.filter(task => task.status === 'done').length;
+    if (completedTowardGoal >= goal.targetTaskCount) {
+      return 'Goal completed';
+    }
+
+    return `${completedTowardGoal}/${goal.targetTaskCount} tasks`;
+  }, [goal.targetTaskCount, goal.title, tasks]);
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
@@ -36,12 +53,15 @@ export default function StatsScreen({
 
       <AppCard soft>
         <View style={styles.headerRow}>
-          <View>
+          <View style={styles.headerTitleBlock}>
             <Text style={styles.heading}>Study Momentum</Text>
             <Text style={styles.subtitle}>Live glance at tasks, streaks, and sessions.</Text>
           </View>
           <View style={styles.headerPill}>
-            <Text style={styles.headerPillText}>{taskCompletion}% complete</Text>
+            <Text style={styles.headerPillLabel}>Goals</Text>
+            <Text style={styles.headerPillText} numberOfLines={2}>
+              {goalSummary}
+            </Text>
           </View>
         </View>
       </AppCard>
@@ -142,7 +162,11 @@ const styles = StyleSheet.create({
     flexDirection: 'row',
     justifyContent: 'space-between',
     gap: spacing.md,
-    alignItems: 'center',
+    alignItems: 'flex-start',
+  },
+  headerTitleBlock: {
+    flex: 1,
+    minWidth: 0,
   },
   heading: {
     fontSize: typography.section,
@@ -155,17 +179,29 @@ const styles = StyleSheet.create({
     fontSize: typography.body,
   },
   headerPill: {
+    flexShrink: 0,
+    maxWidth: 120,
     backgroundColor: palette.surface,
-    borderRadius: radius.round,
-    paddingHorizontal: spacing.md,
+    borderRadius: radius.md,
+    paddingHorizontal: spacing.sm,
     paddingVertical: spacing.xs,
     borderWidth: 1,
     borderColor: palette.border,
+    alignItems: 'center',
+  },
+  headerPillLabel: {
+    color: palette.textMuted,
+    fontSize: 10,
+    fontWeight: '700',
+    textTransform: 'uppercase',
+    letterSpacing: 0.6,
+    marginBottom: 2,
   },
   headerPillText: {
     color: palette.primary,
     fontWeight: '700',
     fontSize: 12,
+    textAlign: 'center',
   },
   grid: {
     flexDirection: 'row',

@@ -9,6 +9,7 @@ import {
   View,
 } from 'react-native';
 import { palette, radius, spacing } from '../src/theme/tokens';
+import { fetchWithTimeout, probeBackend, readResponseBody } from '../src/utils/backend';
 
 type AuthMode = 'signin' | 'signup';
 
@@ -26,51 +27,6 @@ type AuthResult = {
 type Props = {
   onAuthenticated: (result: AuthResult) => void;
 };
-
-const BACKEND_BASE_URLS =
-  typeof navigator !== 'undefined' && navigator.product === 'ReactNative'
-    ? ['http://10.0.2.2:5000', 'http://localhost:5000', 'http://127.0.0.1:5000']
-    : ['http://localhost:5000'];
-
-async function fetchWithTimeout(url: string, options: RequestInit, timeoutMs: number) {
-  const controller = new AbortController();
-  const timeoutId = setTimeout(() => controller.abort(), timeoutMs);
-
-  try {
-    return await fetch(url, {
-      ...options,
-      signal: controller.signal,
-    });
-  } finally {
-    clearTimeout(timeoutId);
-  }
-}
-
-async function readResponseBody(response: Response) {
-  const contentType = response.headers.get('content-type') || '';
-
-  if (contentType.includes('application/json')) {
-    return response.json();
-  }
-
-  return response.text();
-}
-
-async function probeBackend() {
-  for (const baseUrl of BACKEND_BASE_URLS) {
-    try {
-      const response = await fetchWithTimeout(`${baseUrl}/api/health`, { method: 'GET' }, 5000);
-
-      if (response.ok) {
-        return baseUrl;
-      }
-    } catch (_error) {
-      // Try the next URL.
-    }
-  }
-
-  return null;
-}
 
 export default function AuthScreen({ onAuthenticated }: Props) {
   const [mode, setMode] = useState<AuthMode>('signin');
@@ -100,10 +56,6 @@ export default function AuthScreen({ onAuthenticated }: Props) {
 
     try {
       const baseUrl = await probeBackend();
-
-      if (!baseUrl) {
-        throw new Error('Unable to reach the backend. Make sure the API is running.');
-      }
 
       const response = await fetchWithTimeout(
         `${baseUrl}/api/auth/${mode}`,

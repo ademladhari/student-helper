@@ -1,4 +1,5 @@
 import { GEMINI_API_KEY, GEMINI_MODEL } from '../config/gemini';
+import { getGeminiGenerateContentUrl, getGeminiRequestHeaders } from './geminiApi';
 
 export type LibraryFolderForAi = {
   name: string;
@@ -45,7 +46,7 @@ export async function fetchLibraryAiInsights(context: string): Promise<{ summary
     throw new Error('Set GEMINI_API_KEY in MobileApp/.env to enable AI insights.');
   }
 
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
+  const endpoint = getGeminiGenerateContentUrl(GEMINI_MODEL);
   const prompt = `You are a supportive study assistant. The student's document library is described below ONLY by folder names and file titles (there is NO access to file contents—do not pretend you read inside files).
 
 Produce helpful, encouraging text based only on what is listed.
@@ -59,7 +60,7 @@ ${context}`;
 
   const response = await fetch(endpoint, {
     method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
+    headers: getGeminiRequestHeaders(GEMINI_API_KEY),
     body: JSON.stringify({
       contents: [{ role: 'user', parts: [{ text: prompt }] }],
     }),

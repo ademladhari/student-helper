@@ -14,6 +14,8 @@ export type ManagedFile = DocumentPickerResponse & {
   id: string;
   folderId: string;
   displayName?: string;
+  /** Persistent copy in app storage — survives cache clears and content URI expiry. */
+  localPath?: string;
 };
 
 type StoredState = {
@@ -37,6 +39,56 @@ function normalizeStoredFiles(raw: unknown[]): ManagedFile[] {
       folderId: f.folderId || ROOT_FOLDER_ID,
     };
   });
+}
+
+export function isPdfFile(file: ManagedFile) {
+  const name = (file.displayName || file.name || '').toLowerCase();
+  const type = (file.type || '').toLowerCase();
+
+  return type.includes('pdf') || name.endsWith('.pdf');
+}
+
+export function isImageFile(file: ManagedFile) {
+  const name = (file.displayName || file.name || '').toLowerCase();
+  const type = (file.type || '').toLowerCase();
+
+  if (type.startsWith('image/')) {
+    return true;
+  }
+
+  return (
+    name.endsWith('.jpg') ||
+    name.endsWith('.jpeg') ||
+    name.endsWith('.png') ||
+    name.endsWith('.webp') ||
+    name.endsWith('.gif') ||
+    name.endsWith('.heic') ||
+    name.endsWith('.heif')
+  );
+}
+
+export function getFileBadgeLabel(file: ManagedFile) {
+  if (isPdfFile(file)) {
+    return 'PDF';
+  }
+  if (isImageFile(file)) {
+    return 'IMG';
+  }
+  return 'FILE';
+}
+
+export function getManagedFileUri(file: ManagedFile) {
+  const raw = file.localPath || file.fileCopyUri || file.uri;
+
+  if (!raw) {
+    return null;
+  }
+
+  if (raw.startsWith('file://') || raw.startsWith('content://')) {
+    return raw;
+  }
+
+  return `file://${raw}`;
 }
 
 export function isDocumentFile(file: ManagedFile) {
@@ -66,7 +118,7 @@ export type FileLibraryApi = {
   filesByFolder: Array<ManagedFolder & { files: ManagedFile[] }>;
   appendPickedFiles: (files: DocumentPickerResponse[]) => void;
   addFolder: (name: string) => { ok: true } | { ok: false; reason: 'empty' | 'duplicate' };
-  updateFile: (id: string, patch: { displayName?: string; folderId?: string }) => void;
+  updateFile: (id: string, patch: { displayName?: string; folderId?: string; localPath?: string }) => void;
 };
 
 export function useFileLibrary(): FileLibraryApi {
@@ -135,18 +187,21 @@ export function useFileLibrary(): FileLibraryApi {
     }));
   }, [folders, managedFiles]);
 
-  const appendPickedFiles = useCallback((files: DocumentPickerResponse[]) => {
-    const baseTime = Date.now();
-    setManagedFiles(currentFiles => [
-      ...currentFiles,
-      ...files.map((file, index) => ({
-        ...file,
-        id: `file-${baseTime}-${index}`,
-        folderId: ROOT_FOLDER_ID,
-        displayName: file.name || 'Unnamed file',
-      })),
-    ]);
-  }, []);
+  const appendPickedFiles = useCallback(
+    (files: Array<DocumentPickerResponse & { id?: string; localPath?: string }>) => {
+      const baseTime = Date.now();
+      setManagedFiles(currentFiles => [
+        ...currentFiles,
+        ...files.map((file, index) => ({
+          ...file,
+          id: file.id || `file-${baseTime}-${index}`,
+          folderId: ROOT_FOLDER_ID,
+          displayName: file.name || 'Unnamed file',
+        })),
+      ]);
+    },
+    [],
+  );
 
   const addFolder = useCallback(
     (name: string) => {
@@ -176,7 +231,7 @@ export function useFileLibrary(): FileLibraryApi {
     [folders],
   );
 
-  const updateFile = useCallback((id: string, patch: { displayName?: string; folderId?: string }) => {
+  const updateFile = useCallback((id: string, patch: { displayName?: string; folderId?: string; localPath?: string }) => {
     setManagedFiles(currentFiles =>
       currentFiles.map(file => {
         if (file.id !== id) {
@@ -189,6 +244,9 @@ export function useFileLibrary(): FileLibraryApi {
         if (patch.displayName !== undefined) {
           const trimmed = patch.displayName.trim();
           next.displayName = trimmed || file.displayName || file.name || 'Unnamed file';
+        }
+        if (patch.localPath !== undefined) {
+          next.localPath = patch.localPath;
         }
         return next;
       }),

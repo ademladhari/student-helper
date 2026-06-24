@@ -1,5 +1,6 @@
 import pdfParse from "pdf-parse";
 import { extractTextFromImageBuffer } from "./ocrService.js";
+import { generateGeminiText } from "./geminiService.js";
 
 const IMAGE_TYPES = new Set([
   "image/jpeg",
@@ -94,41 +95,7 @@ function buildImageParts(files) {
 }
 
 async function requestGemini(parts) {
-  const apiKey = process.env.GEMINI_API_KEY;
-  const model = process.env.GEMINI_MODEL || "gemini-2.5-flash";
-
-  if (!apiKey) {
-    throw new Error("Missing GEMINI_API_KEY on backend.");
-  }
-
-  const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${apiKey}`;
-  const response = await fetch(endpoint, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({
-      contents: [{ role: "user", parts }],
-    }),
-  });
-
-  if (!response.ok) {
-    let detail = "";
-    try {
-      const errBody = await response.json();
-      detail = typeof errBody?.error?.message === "string"
-        ? errBody.error.message
-        : JSON.stringify(errBody);
-    } catch {
-      detail = await response.text();
-    }
-    throw new Error(detail || `Gemini request failed (${response.status})`);
-  }
-
-  const payload = await response.json();
-  const aiText = payload?.candidates?.[0]?.content?.parts?.[0]?.text;
-  if (!aiText || typeof aiText !== "string") {
-    throw new Error("Gemini returned an empty response.");
-  }
-
+  const aiText = await generateGeminiText(parts);
   return parseInsightsJson(aiText);
 }
 

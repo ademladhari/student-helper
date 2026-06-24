@@ -1,9 +1,23 @@
 import React, { useState } from 'react';
-import { Alert, Linking, Modal, ScrollView, StyleSheet, Text, TextInput, Pressable, View } from 'react-native';
+import {
+  ActivityIndicator,
+  Alert,
+  Linking,
+  Modal,
+  ScrollView,
+  StyleSheet,
+  Text,
+  TextInput,
+  Pressable,
+  View,
+} from 'react-native';
 import AppCard from '../src/components/AppCard';
+import ImageViewerModal from '../src/components/ImageViewerModal';
+import PdfViewerModal from '../src/components/PdfViewerModal';
 import DocumentPicker from 'react-native-document-picker';
+import { persistPickedFileToLibrary, resolveManagedFileUri } from '../src/fileLibrary/fileStorage';
 import type { FileLibraryApi, ManagedFile } from '../src/fileLibrary/useFileLibrary';
-import { ROOT_FOLDER_ID, pickFilesFromDevice } from '../src/fileLibrary/useFileLibrary';
+import { ROOT_FOLDER_ID, getFileBadgeLabel, isImageFile, isPdfFile, pickFilesFromDevice } from '../src/fileLibrary/useFileLibrary';
 import { palette, radius, spacing, typography } from '../src/theme/tokens';
 
 type Props = {
@@ -26,11 +40,29 @@ export default function FileManagerScreen({ onBack, fileLibrary }: Props) {
   const [activeFileId, setActiveFileId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editFolderId, setEditFolderId] = useState(ROOT_FOLDER_ID);
+  const [viewingPdf, setViewingPdf] = useState<{ fileName: string; uri: string } | null>(null);
+  const [viewingImage, setViewingImage] = useState<{ fileName: string; uri: string } | null>(null);
+  const [isOpeningFile, setIsOpeningFile] = useState(false);
 
   async function openFilePicker() {
     try {
       const files = await pickFilesFromDevice();
-      appendPickedFiles(files);
+      const baseTime = Date.now();
+      const managed = await Promise.all(
+        files.map(async (file, index) => {
+          const id = `file-${baseTime}-${index}`;
+          let localPath: string | undefined;
+
+          try {
+            localPath = await persistPickedFileToLibrary(file, id);
+          } catch (persistError) {
+            console.warn('Failed to persist picked file', persistError);
+          }
+
+          return { ...file, id, localPath };
+        }),
+      );
+      appendPickedFiles(managed);
     } catch (error) {
       if (DocumentPicker.isCancel(error)) {
         return;
@@ -81,15 +113,49 @@ export default function FileManagerScreen({ onBack, fileLibrary }: Props) {
     closeFileModal();
   }
 
-  function openFile(file: ManagedFile) {
-    if (!file.uri) {
-      Alert.alert('Open failed', 'This file does not have a valid URI.');
-      return;
-    }
+  async function openFile(file: ManagedFile) {
+    setIsOpeningFile(true);
 
-    Linking.openURL(file.uri).catch(() => {
-      Alert.alert('Open failed', 'Unable to open this file on the device.');
-    });
+    try {
+      const uri = await resolveManagedFileUri(file);
+
+      if (!uri) {
+        Alert.alert(
+          'Open failed',
+          'This file is no longer available on your device. Remove it from the library and add it again.',
+        );
+        return;
+      }
+
+      if (uri !== file.localPath) {
+        updateFile(file.id, { localPath: uri });
+      }
+
+      if (isPdfFile(file)) {
+        setViewingPdf({
+          fileName: file.displayName || file.name || 'Document.pdf',
+          uri,
+        });
+        return;
+      }
+
+      if (isImageFile(file)) {
+        setViewingImage({
+          fileName: file.displayName || file.name || 'Image',
+          uri,
+        });
+        return;
+      }
+
+      Linking.openURL(uri).catch(() => {
+        Alert.alert('Open failed', 'Unable to open this file type in another app.');
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Could not open this file.';
+      Alert.alert('Open failed', message);
+    } finally {
+      setIsOpeningFile(false);
+    }
   }
 
   if (!hydrated) {
@@ -101,7 +167,8 @@ export default function FileManagerScreen({ onBack, fileLibrary }: Props) {
   }
 
   return (
-    <ScrollView contentContainerStyle={styles.container}>
+    <View style={styles.screen}>
+      <ScrollView contentContainerStyle={styles.container}>
       <AppCard>
         <View style={styles.rowSpace}>
           <Text style={styles.sectionTitle}>File Manager</Text>
@@ -156,9 +223,9 @@ export default function FileManagerScreen({ onBack, fileLibrary }: Props) {
 
           <View style={styles.fileList}>
             {folder.files.map(file => (
-              <View key={file.id} style={styles.fileRow}>
+              <Pressable key={file.id} style={styles.fileRow} onPress={() => openFile(file)}>
                 <View style={styles.fileBadge}>
-                  <Text style={styles.fileBadgeText}>FILE</Text>
+                  <Text style={styles.fileBadgeText}>{getFileBadgeLabel(file)}</Text>
                 </View>
                 <View style={styles.fileInfo}>
                   <Text style={styles.fileName} numberOfLines={1}>
@@ -173,7 +240,7 @@ export default function FileManagerScreen({ onBack, fileLibrary }: Props) {
                     </Pressable>
                   </View>
                 </View>
-              </View>
+              </Pressable>
             ))}
           </View>
         </AppCard>
@@ -236,11 +303,48 @@ export default function FileManagerScreen({ onBack, fileLibrary }: Props) {
           </View>
         </View>
       </Modal>
-    </ScrollView>
+      </ScrollView>
+
+      <PdfViewerModal
+        visible={viewingPdf !== null}
+        fileName={viewingPdf?.fileName || 'Document'}
+        uri={viewingPdf?.uri || null}
+        onClose={() => setViewingPdf(null)}
+      />
+
+      <ImageViewerModal
+        visible={viewingImage !== null}
+        fileName={viewingImage?.fileName || 'Image'}
+        uri={viewingImage?.uri || null}
+        onClose={() => setViewingImage(null)}
+      />
+
+      {isOpeningFile ? (
+        <View style={styles.openingOverlay}>
+          <ActivityIndicator size="large" color={palette.primary} />
+          <Text style={styles.openingText}>Preparing file…</Text>
+        </View>
+      ) : null}
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
+  screen: {
+    flex: 1,
+  },
+  openingOverlay: {
+    ...StyleSheet.absoluteFillObject,
+    backgroundColor: 'rgba(8, 16, 32, 0.35)',
+    justifyContent: 'center',
+    alignItems: 'center',
+    gap: spacing.sm,
+  },
+  openingText: {
+    color: palette.textStrong,
+    fontSize: typography.body,
+    fontWeight: '600',
+  },
   loading: {
     flex: 1,
     justifyContent: 'center',

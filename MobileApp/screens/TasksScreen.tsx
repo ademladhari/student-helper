@@ -1,5 +1,6 @@
 import React, { useMemo, useState } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import AppCard from '../src/components/AppCard';
 import { palette, radius, spacing, typography } from '../src/theme/tokens';
 import { TaskDraftInput, TaskItem } from '../src/types/study';
@@ -18,9 +19,33 @@ const filters: FilterKey[] = ['all', 'draft', 'todo', 'done'];
 export default function TasksScreen({ tasks, onAddTask, onConfirmDraft, onToggleDone }: Props) {
   const [activeFilter, setActiveFilter] = useState<FilterKey>('all');
   const [title, setTitle] = useState('');
-  const [dueDate, setDueDate] = useState('');
+  const [dueDate, setDueDate] = useState(() => new Date());
+  const [showDatePicker, setShowDatePicker] = useState(false);
   const [pomodoros, setPomodoros] = useState('1');
   const [priority, setPriority] = useState('medium');
+
+  const dueDateLabel = useMemo(
+    () =>
+      dueDate.toLocaleDateString(undefined, {
+        weekday: 'short',
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+      }),
+    [dueDate],
+  );
+
+  function onDueDateChange(event: DateTimePickerEvent, selectedDate?: Date) {
+    if (Platform.OS === 'android') {
+      setShowDatePicker(false);
+    }
+
+    if (event.type === 'dismissed' || !selectedDate) {
+      return;
+    }
+
+    setDueDate(selectedDate);
+  }
 
   const filtered = useMemo(() => {
     if (activeFilter === 'all') {
@@ -40,10 +65,6 @@ export default function TasksScreen({ tasks, onAddTask, onConfirmDraft, onToggle
 
     const parsedPomodoros = Number.parseInt(pomodoros, 10);
     const safePomodoros = Number.isNaN(parsedPomodoros) ? 1 : Math.max(1, parsedPomodoros);
-    const parsedDate = new Date(dueDate);
-    const safeDueDate = Number.isNaN(parsedDate.getTime())
-      ? new Date().toISOString()
-      : parsedDate.toISOString();
     const normalizedPriority = priority.trim().toLowerCase();
     const safePriority = ['low', 'medium', 'high'].includes(normalizedPriority)
       ? (normalizedPriority as 'low' | 'medium' | 'high')
@@ -51,13 +72,14 @@ export default function TasksScreen({ tasks, onAddTask, onConfirmDraft, onToggle
 
     onAddTask({
       title: trimmedTitle,
-      dueDate: safeDueDate,
+      dueDate: dueDate.toISOString(),
       estimatedPomodoros: safePomodoros,
       priority: safePriority,
     });
 
     setTitle('');
-    setDueDate('');
+    setDueDate(new Date());
+    setShowDatePicker(false);
     setPomodoros('1');
     setPriority('medium');
   }
@@ -78,13 +100,25 @@ export default function TasksScreen({ tasks, onAddTask, onConfirmDraft, onToggle
           placeholderTextColor={palette.textMuted}
           style={styles.input}
         />
-        <TextInput
-          value={dueDate}
-          onChangeText={setDueDate}
-          placeholder="Due date (YYYY-MM-DD)"
-          placeholderTextColor={palette.textMuted}
-          style={styles.input}
-        />
+        <Pressable onPress={() => setShowDatePicker(current => !current)} style={styles.dateField}>
+          <Text style={styles.dateFieldLabel}>Due date</Text>
+          <Text style={styles.dateFieldValue}>{dueDateLabel}</Text>
+        </Pressable>
+        {showDatePicker ? (
+          <View style={styles.datePickerWrap}>
+            <DateTimePicker
+              value={dueDate}
+              mode="date"
+              display={Platform.OS === 'ios' ? 'inline' : 'default'}
+              onChange={onDueDateChange}
+            />
+            {Platform.OS === 'ios' ? (
+              <Pressable onPress={() => setShowDatePicker(false)} style={styles.dateDoneButton}>
+                <Text style={styles.dateDoneText}>Done</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        ) : null}
         <TextInput
           value={pomodoros}
           onChangeText={setPomodoros}
@@ -178,6 +212,37 @@ const styles = StyleSheet.create({
     paddingVertical: 11,
     color: palette.textStrong,
     marginBottom: spacing.sm,
+  },
+  dateField: {
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: '#F9FBFF',
+    paddingHorizontal: spacing.md,
+    paddingVertical: 11,
+    marginBottom: spacing.sm,
+  },
+  dateFieldLabel: {
+    color: palette.textMuted,
+    fontSize: 12,
+    marginBottom: 2,
+  },
+  dateFieldValue: {
+    color: palette.textStrong,
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  datePickerWrap: {
+    marginBottom: spacing.sm,
+  },
+  dateDoneButton: {
+    alignSelf: 'flex-end',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+  dateDoneText: {
+    color: palette.primary,
+    fontWeight: '700',
   },
   addButton: {
     backgroundColor: palette.primary,

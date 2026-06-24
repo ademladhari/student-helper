@@ -2,10 +2,15 @@ export type AmbientSound = {
   id: string;
   title: string;
   description: string;
-  source: number;
+  source: number | { uri: string };
+  isUserTrack?: boolean;
 };
 
-export const ambientSounds: AmbientSound[] = [
+export function resolveAmbientVideoSource(sound: AmbientSound) {
+  return sound.source;
+}
+
+export const builtInAmbientSounds: AmbientSound[] = [
   {
     id: 'lofi-soft-1',
     title: 'Lo-fi soft (Sample A)',
@@ -31,3 +36,6 @@ export const ambientSounds: AmbientSound[] = [
     source: require('./chronopopofficial-lofi-sample-if-i-cant-have-you-330746 (1).mp3'),
   },
 ];
+
+/** @deprecated Use builtInAmbientSounds or combine with user tracks from useAmbientLibrary */
+export const ambientSounds = builtInAmbientSounds;

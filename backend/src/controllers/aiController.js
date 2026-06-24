@@ -1,4 +1,5 @@
 import { buildLibrarySummary } from "../services/aiSummaryService.js";
+import { generateTaskDraftsFromText } from "../services/scanAiService.js";
 
 export async function summarizeLibraryFiles(req, res) {
   const startedAt = Date.now();
@@ -41,6 +42,34 @@ export async function summarizeLibraryFiles(req, res) {
 
     return res.status(500).json({
       message: "AI summary failed",
+      detail: error.message,
+    });
+  }
+}
+
+export async function generateScanTasks(req, res) {
+  const startedAt = Date.now();
+
+  try {
+    const text = req.body?.text;
+    const drafts = await generateTaskDraftsFromText(text);
+
+    console.log("[AI] Scan task generation completed", {
+      durationMs: Date.now() - startedAt,
+      draftCount: drafts.length,
+    });
+
+    return res.json({ drafts });
+  } catch (error) {
+    console.error("[AI] Scan task generation failed", {
+      durationMs: Date.now() - startedAt,
+      message: error.message,
+    });
+
+    const status = error.message === "text is required" ? 400 : 500;
+
+    return res.status(status).json({
+      message: "AI task generation failed",
       detail: error.message,
     });
   }

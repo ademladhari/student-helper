@@ -16,7 +16,6 @@ import { Asset, launchCamera } from 'react-native-image-picker';
 import AppCard from '../src/components/AppCard';
 import { palette, radius, spacing, typography } from '../src/theme/tokens';
 import { DeadlineCandidate, TaskDraftInput } from '../src/types/study';
-import { GEMINI_API_KEY, GEMINI_MODEL } from '../src/config/gemini';
 import { extractDeadlineCandidates } from '../src/utils/studyPlanner';
 import { getBackendBaseUrls, probeBackend, fetchWithTimeout, readResponseBody } from '../src/utils/backend';
 
@@ -88,84 +87,55 @@ export default function ScanScreen({ onCreateDrafts, onCreateAiDrafts }: Props) 
     return Math.max(1, Math.ceil(minutes / 25));
   }
 
-  function parseGeminiJson(rawText: string) {
-    const start = rawText.indexOf('[');
-    const end = rawText.lastIndexOf(']');
-    if (start === -1 || end === -1 || end <= start) {
-      throw new Error('AI response did not include a JSON array.');
-    }
-    const jsonSlice = rawText.slice(start, end + 1);
-    return JSON.parse(jsonSlice) as Array<{
-      title: string;
-      dueDate: string;
-      estimatedMinutes: number;
-      priority: string;
-    }>;
-  }
-
   async function generateAiDrafts() {
-    if (__DEV__) {
-      console.log('[AI] Generate drafts: env check', {
-        hasKey: !!GEMINI_API_KEY,
-        keyLength: GEMINI_API_KEY?.length ?? 0,
-        model: GEMINI_MODEL,
-      });
-    }
-
     if (!scannedText.trim()) {
       Alert.alert('Missing text', 'Scan or paste text before generating AI tasks.');
-      return;
-    }
-
-    if (!GEMINI_API_KEY || GEMINI_API_KEY.includes('REPLACE_WITH')) {
-      Alert.alert('Gemini not configured', 'Set GEMINI_API_KEY in MobileApp/.env to use Gemini.');
       return;
     }
 
     setIsAiProcessing(true);
 
     try {
-      const endpoint = `https://generativelanguage.googleapis.com/v1beta/models/${GEMINI_MODEL}:generateContent?key=${GEMINI_API_KEY}`;
-      if (__DEV__) {
-        console.log('[AI] Gemini request', { model: GEMINI_MODEL, endpointHost: 'generativelanguage.googleapis.com' });
-      }
-      const prompt = `You are a study assistant. Convert the OCR text into a concise JSON array of task drafts.\n\nRules:\n- Output ONLY valid JSON (no markdown).\n- Each item must have: title, dueDate (ISO 8601), estimatedMinutes (number), priority (low|medium|high).\n- If no due date is in text, use today's date.\n- Estimated minutes should be realistic (15-240).\n\nOCR text:\n${scannedText}`;
+      const baseUrl = await probeBackend();
+      const endpoint = `${baseUrl}/api/ai/generate-tasks`;
 
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
+      if (__DEV__) {
+        console.log('[AI] Generate drafts via backend', { endpoint });
+      }
+
+      const response = await fetchWithTimeout(
+        endpoint,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+          },
+          body: JSON.stringify({ text: scannedText }),
         },
-        body: JSON.stringify({
-          contents: [
-            {
-              role: 'user',
-              parts: [{ text: prompt }],
-            },
-          ],
-        }),
-      });
+        120000,
+      );
+
+      const payload = await readResponseBody(response);
 
       if (!response.ok) {
-        const body = await readResponseBody(response);
-        const message = typeof body === 'string' ? body : body?.error?.message || 'Gemini request failed';
+        const message =
+          typeof payload === 'string'
+            ? payload
+            : payload?.detail || payload?.message || 'AI task generation failed';
         throw new Error(message);
       }
 
-      const payload = await response.json();
-      const aiText = payload?.candidates?.[0]?.content?.parts?.[0]?.text;
-
-      if (!aiText) {
-        throw new Error('Gemini returned an empty response.');
+      const items = Array.isArray(payload?.drafts) ? payload.drafts : [];
+      if (items.length === 0) {
+        throw new Error('AI returned no task drafts.');
       }
 
-      const items = parseGeminiJson(aiText);
       const drafts: Array<{ id: string; draft: TaskDraftInput }> = items.map((item, index) => ({
         id: `ai-draft-${Date.now()}-${index}`,
         draft: {
           title: item.title || 'Untitled task',
           dueDate: new Date(item.dueDate).toISOString(),
-          estimatedPomodoros: minutesToPomodoros(item.estimatedMinutes),
+          estimatedPomodoros: Math.max(1, Number(item.estimatedPomodoros) || 1),
           priority: sanitizePriority(item.priority || 'medium'),
         },
       }));
@@ -174,7 +144,7 @@ export default function ScanScreen({ onCreateDrafts, onCreateAiDrafts }: Props) 
       setSelectedDrafts(new Set(drafts.map(draft => draft.id)));
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Could not generate AI tasks.';
-      Alert.alert('Gemini error', message);
+      Alert.alert('AI error', message);
     } finally {
       setIsAiProcessing(false);
     }

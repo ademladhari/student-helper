@@ -1,38 +1,95 @@
 import React, { useEffect, useMemo, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Platform, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import DateTimePicker, { DateTimePickerEvent } from '@react-native-community/datetimepicker';
 import AppCard from '../src/components/AppCard';
 import { palette, radius, spacing, typography } from '../src/theme/tokens';
-import { StudyBlock, TaskItem } from '../src/types/study';
-
-type LearningGoal = {
-  title: string;
-  targetDate: string;
-};
+import { LearningGoal, StudyBlock, TaskItem } from '../src/types/study';
 
 type Props = {
   tasks: TaskItem[];
   todayPlan: StudyBlock[];
   goal: LearningGoal;
+  userName: string;
   onUpdateGoal: (goal: LearningGoal) => void;
   onOpenScan: () => void;
   onStartFocus: () => void;
 };
 
-export default function HomeScreen({ tasks, todayPlan, goal, onUpdateGoal, onOpenScan, onStartFocus }: Props) {
-  const [goalTitle, setGoalTitle] = useState(goal.title);
-  const [goalDate, setGoalDate] = useState(goal.targetDate);
+function buildGreeting(userName: string) {
+  const firstName = userName.trim().split(/\s+/)[0];
+  if (!firstName || firstName.toLowerCase() === 'guest') {
+    return 'Welcome back!';
+  }
+  return `Hello, ${firstName}!`;
+}
+
+export default function HomeScreen({
+  tasks,
+  todayPlan,
+  goal,
+  userName,
+  onUpdateGoal,
+  onOpenScan,
+  onStartFocus,
+}: Props) {
+  const [goalTitle, setGoalTitle] = useState(goal.title || '');
+  const [goalTaskCount, setGoalTaskCount] = useState(
+    goal.targetTaskCount > 0 ? String(goal.targetTaskCount) : '',
+  );
+  const [goalTargetDate, setGoalTargetDate] = useState(() => {
+    if (goal.targetDate) {
+      const parsed = new Date(goal.targetDate);
+      if (!Number.isNaN(parsed.getTime())) {
+        return parsed;
+      }
+    }
+    const nextWeek = new Date();
+    nextWeek.setDate(nextWeek.getDate() + 7);
+    return nextWeek;
+  });
+  const [showGoalDatePicker, setShowGoalDatePicker] = useState(false);
 
   useEffect(() => {
-    setGoalTitle(goal.title);
-    setGoalDate(goal.targetDate);
-  }, [goal.title, goal.targetDate]);
+    setGoalTitle(goal.title || '');
+    setGoalTaskCount(goal.targetTaskCount > 0 ? String(goal.targetTaskCount) : '');
+    if (goal.targetDate) {
+      const parsed = new Date(goal.targetDate);
+      if (!Number.isNaN(parsed.getTime())) {
+        setGoalTargetDate(parsed);
+      }
+    }
+  }, [goal.title, goal.targetTaskCount, goal.targetDate]);
+
+  const greeting = useMemo(() => buildGreeting(userName), [userName]);
+
+  const goalTargetDateLabel = useMemo(
+    () =>
+      goalTargetDate.toLocaleDateString(undefined, {
+        weekday: 'short',
+        year: 'numeric',
+        month: 'short',
+        day: 'numeric',
+      }),
+    [goalTargetDate],
+  );
+
+  function onGoalTargetDateChange(event: DateTimePickerEvent, selectedDate?: Date) {
+    if (Platform.OS === 'android') {
+      setShowGoalDatePicker(false);
+    }
+
+    if (event.type === 'dismissed' || !selectedDate) {
+      return;
+    }
+
+    setGoalTargetDate(selectedDate);
+  }
 
   const upcoming = tasks
     .filter(task => task.status !== 'done')
     .sort((a, b) => +new Date(a.dueDate) - +new Date(b.dueDate))
     .slice(0, 3);
 
-  const completedCount = tasks.filter(task => task.status === 'done').length;
   const totalPomodorosPlanned = tasks.reduce((sum, task) => sum + task.estimatedPomodoros, 0);
   const totalPomodorosDone = tasks
     .filter(task => task.status === 'done')
@@ -44,71 +101,65 @@ export default function HomeScreen({ tasks, todayPlan, goal, onUpdateGoal, onOpe
   const completedHours = totalPomodorosDone === 0 ? 0 : (totalPomodorosDone * 25) / 60;
 
   const goalStats = useMemo(() => {
-    if (!goal.targetDate) {
+    if (!goal.targetTaskCount || goal.targetTaskCount < 1) {
       return null;
     }
 
-    const target = new Date(goal.targetDate);
-    if (Number.isNaN(target.getTime())) {
-      return null;
-    }
+    const completedTasks = tasks.filter(task => task.status === 'done').length;
+    const remainingTasks = Math.max(0, goal.targetTaskCount - completedTasks);
+    const progress = Math.min(1, completedTasks / goal.targetTaskCount);
+    const progressPercent = Math.round(progress * 100);
 
     const today = new Date();
     const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-    const targetStart = new Date(target.getFullYear(), target.getMonth(), target.getDate());
-    const totalDays = Math.max(1, Math.ceil((targetStart.getTime() - todayStart.getTime()) / 86400000) + 1);
+    const completedToday = tasks.filter(
+      task =>
+        task.status === 'done' &&
+        task.completedAt &&
+        new Date(task.completedAt) >= todayStart &&
+        new Date(task.completedAt) < new Date(todayStart.getTime() + 86400000),
+    ).length;
 
-    const remainingPomodoros = tasks
-      .filter(task => task.status !== 'done')
-      .reduce((sum, task) => sum + task.estimatedPomodoros, 0);
-
-    const dailyTarget = totalDays <= 0 ? 0 : Math.max(1, Math.ceil(remainingPomodoros / totalDays));
-
-    const completedToday = tasks
-      .filter(task => task.status === 'done' && task.completedAt)
-      .filter(task => {
-        if (!task.completedAt) {
-          return false;
-        }
-        const completedDate = new Date(task.completedAt);
-        return completedDate >= todayStart && completedDate < new Date(todayStart.getTime() + 86400000);
-      })
-      .reduce((sum, task) => sum + task.estimatedPomodoros, 0);
-
-    const totalPlanned = tasks.reduce((sum, task) => sum + task.estimatedPomodoros, 0);
-    const elapsedDays = Math.max(1, Math.ceil((todayStart.getTime() - Math.min(todayStart.getTime(), targetStart.getTime())) / 86400000) + 1);
-    const expectedByNow = totalPlanned === 0 ? 0 : Math.ceil((totalPlanned / (elapsedDays + totalDays - 1)) * elapsedDays);
-    const behind = totalPomodorosDone < expectedByNow;
+    let daysUntilTarget: number | null = null;
+    if (goal.targetDate) {
+      const targetStart = new Date(goal.targetDate);
+      targetStart.setHours(0, 0, 0, 0);
+      daysUntilTarget = Math.ceil((targetStart.getTime() - todayStart.getTime()) / 86400000);
+    }
 
     return {
-      totalDays,
-      remainingPomodoros,
-      dailyTarget,
+      completedTasks,
+      remainingTasks,
+      progressPercent,
       completedToday,
-      behind,
+      reached: completedTasks >= goal.targetTaskCount,
+      daysUntilTarget,
     };
-  }, [goal.targetDate, tasks, totalPomodorosDone]);
+  }, [goal.targetDate, goal.targetTaskCount, tasks]);
 
   function saveGoal() {
-    const title = goalTitle.trim();
-    const targetDate = goalDate.trim();
+    const trimmedTitle = goalTitle.trim();
+    const parsed = Number.parseInt(goalTaskCount, 10);
 
-    if (!title || !targetDate) {
+    if (!trimmedTitle) {
       return;
     }
 
-    const parsed = new Date(targetDate);
-    if (Number.isNaN(parsed.getTime())) {
+    if (Number.isNaN(parsed) || parsed < 1) {
       return;
     }
 
-    onUpdateGoal({ title, targetDate });
+    onUpdateGoal({
+      title: trimmedTitle,
+      targetTaskCount: parsed,
+      targetDate: goalTargetDate.toISOString(),
+    });
   }
 
   return (
     <ScrollView contentContainerStyle={styles.container}>
       <View style={styles.introWrap}>
-        <Text style={styles.greeting}>Czesc, Alex!</Text>
+        <Text style={styles.greeting}>{greeting}</Text>
         <Text style={styles.subtitle}>Ready to master your sessions today? Let us dive in.</Text>
       </View>
 
@@ -143,38 +194,76 @@ export default function HomeScreen({ tasks, todayPlan, goal, onUpdateGoal, onOpe
       </AppCard>
 
       <AppCard>
-        <Text style={styles.sectionTitle}>Goal-Based Learning</Text>
-        <Text style={styles.muted}>Set a learning goal and the app will pace your daily workload.</Text>
+        <Text style={styles.sectionTitle}>Learning Goal</Text>
+        <Text style={styles.muted}>Name your goal, set a target date, and choose how many tasks to complete.</Text>
         <TextInput
           value={goalTitle}
           onChangeText={setGoalTitle}
-          placeholder="Goal title (e.g. Pass exam in 30 days)"
+          placeholder="Goal title (e.g. Finish midterm prep)"
           placeholderTextColor={palette.textMuted}
           style={styles.input}
         />
+        <Pressable onPress={() => setShowGoalDatePicker(current => !current)} style={styles.dateField}>
+          <Text style={styles.dateFieldLabel}>Target completion date</Text>
+          <Text style={styles.dateFieldValue}>{goalTargetDateLabel}</Text>
+        </Pressable>
+        {showGoalDatePicker ? (
+          <View style={styles.datePickerWrap}>
+            <DateTimePicker
+              value={goalTargetDate}
+              mode="date"
+              display={Platform.OS === 'ios' ? 'inline' : 'default'}
+              onChange={onGoalTargetDateChange}
+            />
+            {Platform.OS === 'ios' ? (
+              <Pressable onPress={() => setShowGoalDatePicker(false)} style={styles.dateDoneButton}>
+                <Text style={styles.dateDoneText}>Done</Text>
+              </Pressable>
+            ) : null}
+          </View>
+        ) : null}
         <TextInput
-          value={goalDate}
-          onChangeText={setGoalDate}
-          placeholder="Target date (YYYY-MM-DD)"
+          value={goalTaskCount}
+          onChangeText={setGoalTaskCount}
+          placeholder="Number of tasks to complete (e.g. 10)"
           placeholderTextColor={palette.textMuted}
+          keyboardType="number-pad"
           style={styles.input}
         />
         <Pressable style={styles.secondaryButton} onPress={saveGoal}>
           <Text style={styles.secondaryButtonText}>Save Goal</Text>
         </Pressable>
 
-        {goal.title && goalStats ? (
+        {goal.targetTaskCount > 0 && goal.title && goalStats ? (
           <View style={styles.goalSummary}>
             <Text style={styles.goalTitle}>{goal.title}</Text>
-            <Text style={styles.goalMeta}>Days left: {goalStats.totalDays}</Text>
-            <Text style={styles.goalMeta}>Daily target: {goalStats.dailyTarget} pomodoros</Text>
+            {goal.targetDate ? (
+              <Text style={styles.goalMeta}>
+                Target date: {new Date(goal.targetDate).toLocaleDateString()}
+                {goalStats.daysUntilTarget !== null
+                  ? goalStats.daysUntilTarget > 0
+                    ? ` · ${goalStats.daysUntilTarget} day${goalStats.daysUntilTarget === 1 ? '' : 's'} left`
+                    : goalStats.daysUntilTarget === 0
+                      ? ' · due today'
+                      : ` · ${Math.abs(goalStats.daysUntilTarget)} day${Math.abs(goalStats.daysUntilTarget) === 1 ? '' : 's'} overdue`
+                  : ''}
+              </Text>
+            ) : null}
+            <Text style={styles.goalMeta}>
+              Progress: {goalStats.completedTasks} of {goal.targetTaskCount} tasks ({goalStats.progressPercent}%)
+            </Text>
+            <View style={styles.goalProgressTrack}>
+              <View style={[styles.goalProgressFill, { width: `${goalStats.progressPercent}%` }]} />
+            </View>
             <Text style={styles.goalMeta}>Completed today: {goalStats.completedToday}</Text>
-            <Text style={goalStats.behind ? styles.goalBehind : styles.goalOnTrack}>
-              {goalStats.behind ? 'You are behind pace. Daily target recalculated.' : 'You are on track.'}
+            <Text style={styles.goalMeta}>
+              {goalStats.reached
+                ? 'Goal reached — nice work!'
+                : `${goalStats.remainingTasks} task${goalStats.remainingTasks === 1 ? '' : 's'} left`}
             </Text>
           </View>
         ) : (
-          <Text style={styles.helperLine}>Add a goal and target date to start tracking.</Text>
+          <Text style={styles.helperLine}>Set a title, date, and task count to start tracking.</Text>
         )}
       </AppCard>
 
@@ -301,6 +390,38 @@ const styles = StyleSheet.create({
     color: palette.textStrong,
     marginBottom: spacing.sm,
   },
+  dateField: {
+    borderRadius: radius.md,
+    borderWidth: 1,
+    borderColor: palette.border,
+    backgroundColor: '#F9FBFF',
+    paddingHorizontal: spacing.md,
+    paddingVertical: 11,
+    marginBottom: spacing.sm,
+  },
+  dateFieldLabel: {
+    color: palette.textMuted,
+    fontSize: 12,
+    marginBottom: 2,
+  },
+  dateFieldValue: {
+    color: palette.textStrong,
+    fontSize: 15,
+    fontWeight: '600',
+  },
+  datePickerWrap: {
+    marginBottom: spacing.sm,
+  },
+  dateDoneButton: {
+    alignSelf: 'flex-end',
+    paddingVertical: 8,
+    paddingHorizontal: 12,
+  },
+  dateDoneText: {
+    color: palette.primary,
+    fontWeight: '700',
+    fontSize: 14,
+  },
   secondaryButton: {
     alignSelf: 'flex-start',
     borderRadius: radius.md,
@@ -334,15 +455,17 @@ const styles = StyleSheet.create({
     color: palette.textMuted,
     fontSize: 13,
   },
-  goalBehind: {
-    color: palette.warning,
-    fontWeight: '700',
-    marginTop: 4,
+  goalProgressTrack: {
+    height: 10,
+    borderRadius: radius.round,
+    backgroundColor: '#D4DEED',
+    overflow: 'hidden',
+    marginVertical: spacing.xs,
   },
-  goalOnTrack: {
-    color: palette.primary,
-    fontWeight: '700',
-    marginTop: 4,
+  goalProgressFill: {
+    height: '100%',
+    backgroundColor: palette.primary,
+    borderRadius: radius.round,
   },
   rowSpace: {
     flexDirection: 'row',

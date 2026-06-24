@@ -1,8 +1,10 @@
 import React, { useEffect, useMemo } from 'react';
-import { Alert, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
+import { Alert, AppState, Pressable, ScrollView, StyleSheet, Text, TextInput, View } from 'react-native';
 import AppCard from '../src/components/AppCard';
+import FocusAppBlockerSection from '../src/components/FocusAppBlockerSection';
 import { palette, radius, spacing, typography } from '../src/theme/tokens';
 import { FocusSessionState, TaskDraftInput, TaskItem } from '../src/types/study';
+import { getRemainingSeconds, pauseTimer, resumeTimer, startTimer } from '../src/utils/focusTimer';
 
 type Props = {
   tasks: TaskItem[];
@@ -14,6 +16,9 @@ type Props = {
   onToggleAmbientSync: () => void;
   ambientSyncEnabled: boolean;
   ambientHasSelection: boolean;
+  blockedPackages: string[];
+  onSaveBlockedPackages: (packages: string[]) => void;
+  onSyncAppBlocking: (active: boolean) => void;
 };
 
 const sessionOptions = [25, 90] as const;
@@ -43,6 +48,9 @@ export default function FocusScreen({
   onToggleAmbientSync,
   ambientSyncEnabled,
   ambientHasSelection,
+  blockedPackages,
+  onSaveBlockedPackages,
+  onSyncAppBlocking,
 }: Props) {
   const {
     sessionMinutes,
@@ -54,6 +62,9 @@ export default function FocusScreen({
     blockTasks,
     quickTaskTitle,
     quickTaskPomodoros,
+    appBlockingEnabled,
+    showAppBlockerPicker,
+    timerEndsAt,
   } = focusSession;
 
   const activeTasks = useMemo(() => tasks.filter(task => task.status !== 'done'), [tasks]);
@@ -65,20 +76,43 @@ export default function FocusScreen({
 
   const totalPlanPomodoros = blockTasks.reduce((sum, task) => sum + task.remainingPomodoros, 0);
 
+  function syncTimerFromClock() {
+    setFocusSession(current => {
+      if (current.isPaused || current.timerEndsAt == null) {
+        return current;
+      }
+
+      const remaining = getRemainingSeconds(current);
+      if (remaining === current.secondsLeft) {
+        return current;
+      }
+
+      return {
+        ...current,
+        secondsLeft: remaining,
+      };
+    });
+  }
+
   useEffect(() => {
-    if (secondsLeft <= 0 || isPaused) {
+    if (isPaused || timerEndsAt == null) {
       return;
     }
 
-    const timer = setInterval(() => {
-      setFocusSession(current => ({
-        ...current,
-        secondsLeft: Math.max(0, current.secondsLeft - 1),
-      }));
-    }, 1000);
-
+    syncTimerFromClock();
+    const timer = setInterval(syncTimerFromClock, 1000);
     return () => clearInterval(timer);
-  }, [secondsLeft, isPaused, setFocusSession]);
+  }, [isPaused, timerEndsAt, setFocusSession]);
+
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', nextState => {
+      if (nextState === 'active') {
+        syncTimerFromClock();
+      }
+    });
+
+    return () => subscription.remove();
+  }, [setFocusSession]);
 
   useEffect(() => {
     if (secondsLeft > 0) {
@@ -87,12 +121,13 @@ export default function FocusScreen({
 
     if (phase === 'focus') {
       setFocusSession(current => {
+        const breakSeconds = BREAK_MINUTES_BY_SESSION[current.sessionMinutes] * 60;
+
         if (current.blockTasks.length === 0) {
           return {
             ...current,
             phase: 'break',
-            secondsLeft: BREAK_MINUTES_BY_SESSION[current.sessionMinutes] * 60,
-            isPaused: false,
+            ...startTimer(breakSeconds),
           };
         }
 
@@ -106,8 +141,7 @@ export default function FocusScreen({
               ? [{ ...firstTask, remainingPomodoros: nextRemaining }, ...rest]
               : rest,
           phase: 'break',
-          secondsLeft: BREAK_MINUTES_BY_SESSION[current.sessionMinutes] * 60,
-          isPaused: false,
+          ...startTimer(breakSeconds),
         };
       });
 
@@ -117,8 +151,7 @@ export default function FocusScreen({
     setFocusSession(current => ({
       ...current,
       phase: 'focus',
-      secondsLeft: current.sessionMinutes * 60,
-      isPaused: false,
+      ...startTimer(current.sessionMinutes * 60),
     }));
   }, [phase, secondsLeft, setFocusSession]);
 
@@ -126,8 +159,7 @@ export default function FocusScreen({
     setFocusSession(current => ({
       ...current,
       phase: 'focus',
-      secondsLeft: current.sessionMinutes * 60,
-      isPaused: false,
+      ...startTimer(current.sessionMinutes * 60),
     }));
   }
 
@@ -135,10 +167,25 @@ export default function FocusScreen({
     setFocusSession(current => ({
       ...current,
       sessionMinutes: nextMinutes,
-      secondsLeft: nextMinutes * 60,
       phase: 'focus',
-      isPaused: false,
+      ...startTimer(nextMinutes * 60),
     }));
+  }
+
+  function togglePause() {
+    setFocusSession(current => {
+      const willPause = !current.isPaused;
+      const shouldBlock =
+        !willPause &&
+        current.appBlockingEnabled &&
+        current.phase === 'focus' &&
+        blockedPackages.length > 0;
+      onSyncAppBlocking(shouldBlock);
+
+      return willPause
+        ? { ...current, ...pauseTimer(current) }
+        : { ...current, ...resumeTimer(current.secondsLeft) };
+    });
   }
 
   function addTaskToBlock(taskId: string) {
@@ -272,9 +319,7 @@ export default function FocusScreen({
         </View>
 
         <View style={styles.controlRow}>
-          <Pressable
-            style={styles.secondaryButton}
-            onPress={() => setFocusSession(current => ({ ...current, isPaused: !current.isPaused }))}>
+          <Pressable style={styles.secondaryButton} onPress={togglePause}>
             <Text style={styles.secondaryButtonText}>{isPaused ? 'Resume' : 'Pause'}</Text>
           </Pressable>
           <Pressable style={styles.secondaryButton} onPress={resetTimer}>
@@ -299,9 +344,25 @@ export default function FocusScreen({
           </Pressable>
         </View>
 
-        <Pressable style={styles.primaryButton} onPress={onBack}>
-          <Text style={styles.primaryButtonText}>Leave Focus</Text>
-        </Pressable>
+        <FocusAppBlockerSection
+          enabled={appBlockingEnabled}
+          showPicker={showAppBlockerPicker}
+          blockedPackages={blockedPackages}
+          isFocusPhaseActive={phase === 'focus'}
+          onToggleEnabled={enabled =>
+            setFocusSession(current => ({
+              ...current,
+              appBlockingEnabled: enabled,
+            }))
+          }
+          onTogglePicker={visible =>
+            setFocusSession(current => ({
+              ...current,
+              showAppBlockerPicker: visible,
+            }))
+          }
+          onSaveBlockedPackages={onSaveBlockedPackages}
+        />
       </AppCard>
 
       <AppCard soft>
@@ -391,6 +452,10 @@ export default function FocusScreen({
           </View>
         ) : null}
       </AppCard>
+
+      <Pressable style={styles.leaveFocusButton} onPress={onBack}>
+        <Text style={styles.leaveFocusButtonText}>Leave Focus</Text>
+      </Pressable>
     </ScrollView>
   );
 }
@@ -540,6 +605,19 @@ const styles = StyleSheet.create({
     color: '#FFFFFF',
     fontWeight: '700',
     fontSize: 14,
+  },
+  leaveFocusButton: {
+    marginTop: spacing.lg,
+    marginBottom: spacing.xl,
+    borderRadius: radius.md,
+    backgroundColor: palette.accent,
+    paddingVertical: 16,
+    alignItems: 'center',
+  },
+  leaveFocusButtonText: {
+    color: '#FFFFFF',
+    fontWeight: '700',
+    fontSize: 16,
   },
   rowSpace: {
     flexDirection: 'row',

@@ -1,7 +1,5 @@
-import React, { useCallback, useEffect, useMemo, useState } from 'react';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
-  AppState,
-  AppStateStatus,
   Pressable,
   SafeAreaView,
   StatusBar,
@@ -9,7 +7,6 @@ import {
   Text,
   View,
 } from 'react-native';
-import Video from 'react-native-video';
 import HomeScreen from './screens/HomeScreen';
 import FocusScreen from './screens/FocusScreen';
 import AuthScreen from './screens/AuthScreen';
@@ -21,15 +18,19 @@ import ProfileScreen from './screens/ProfileScreen';
 import StatsScreen from './screens/StatsScreen';
 import TasksScreen from './screens/TasksScreen';
 import { palette, radius, spacing } from './src/theme/tokens';
-import { ambientSounds } from './src/music/ambientSounds';
+import { builtInAmbientSounds } from './src/music/ambientSounds';
+import { useAmbientLibrary } from './src/music/useAmbientLibrary';
+import AmbientAudioPlayer, { type AmbientAudioPlayerHandle } from './src/components/AmbientAudioPlayer';
 import { AmbientState } from './src/types/ambient';
-import { DeadlineCandidate, FocusSessionState, TaskDraftInput, TaskItem } from './src/types/study';
+import { DeadlineCandidate, FocusSessionState, LearningGoal, TaskDraftInput, TaskItem } from './src/types/study';
 import {
   buildTodayPlan,
   convertCandidatesToDraftTasks,
   summarizeStats,
 } from './src/utils/studyPlanner';
 import { useFileLibrary } from './src/fileLibrary/useFileLibrary';
+import { applyFocusBlocking, useFocusBlockedApps } from './src/hooks/useFocusAppBlocking';
+import { startTimer, pauseTimer } from './src/utils/focusTimer';
 
 type TabKey = 'Home' | 'Utility' | 'Tasks' | 'Stats' | 'Profile';
 type ScreenRoute = TabKey | 'Focus' | 'FileManager' | 'Ambient';
@@ -38,11 +39,6 @@ type AuthUser = {
   id: string;
   name: string;
   email: string;
-};
-
-type LearningGoal = {
-  title: string;
-  targetDate: string;
 };
 
 const tabs: TabKey[] = ['Home', 'Utility', 'Tasks', 'Stats', 'Profile'];
@@ -55,16 +51,18 @@ const tabIcons: Record<TabKey, string> = {
 };
 
 function createInitialFocusSession(): FocusSessionState {
+  const secondsLeft = 25 * 60;
   return {
     sessionMinutes: 25,
-    secondsLeft: 25 * 60,
-    isPaused: false,
+    ...startTimer(secondsLeft),
     phase: 'focus',
     showTaskPicker: false,
     showQuickAdd: false,
     blockTasks: [],
     quickTaskTitle: '',
     quickTaskPomodoros: '1',
+    appBlockingEnabled: false,
+    showAppBlockerPicker: false,
   };
 }
 
@@ -74,7 +72,11 @@ function App() {
   const [authUser, setAuthUser] = useState<AuthUser>({ id: 'guest', name: 'Guest', email: '' });
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [focusSession, setFocusSession] = useState<FocusSessionState>(() => createInitialFocusSession());
-  const [learningGoal, setLearningGoal] = useState<LearningGoal>({ title: '', targetDate: '' });
+  const [learningGoal, setLearningGoal] = useState<LearningGoal>({
+    title: '',
+    targetTaskCount: 0,
+    targetDate: '',
+  });
   const [ambientState, setAmbientState] = useState<AmbientState>({
     activeId: null,
     paused: false,
@@ -85,12 +87,36 @@ function App() {
   const stats = useMemo(() => summarizeStats(tasks), [tasks]);
   const todayPlan = useMemo(() => buildTodayPlan(tasks), [tasks]);
   const fileLibrary = useFileLibrary();
+  const ambientLibrary = useAmbientLibrary();
+  const { hydrated: blockedAppsHydrated, blockedPackages, saveBlockedPackages } = useFocusBlockedApps();
+  const allAmbientSounds = useMemo(
+    () => [...builtInAmbientSounds, ...ambientLibrary.userTracks],
+    [ambientLibrary.userTracks],
+  );
   const activeAmbientSound = useMemo(
-    () => ambientSounds.find(sound => sound.id === ambientState.activeId) || null,
-    [ambientState.activeId],
+    () => allAmbientSounds.find(sound => sound.id === ambientState.activeId) || null,
+    [allAmbientSounds, ambientState.activeId],
   );
   const ambientPomodoroPause =
     ambientState.syncWithPomodoro && (focusSession.phase !== 'focus' || focusSession.isPaused);
+  const ambientPlayerRef = useRef<AmbientAudioPlayerHandle>(null);
+
+  const applyAmbientVolume = useCallback((nextVolume: number) => {
+    const clamped = Math.round(Math.min(1, Math.max(0, nextVolume)) * 100) / 100;
+    setAmbientState(current => ({ ...current, volume: clamped }));
+    ambientPlayerRef.current?.setVolume(clamped);
+  }, []);
+
+  const adjustAmbientVolume = useCallback(
+    (delta: number) => {
+      setAmbientState(current => {
+        const clamped = Math.round(Math.min(1, Math.max(0, current.volume + delta)) * 100) / 100;
+        ambientPlayerRef.current?.setVolume(clamped);
+        return { ...current, volume: clamped };
+      });
+    },
+    [],
+  );
   const ambientPlayerPaused = ambientState.paused || ambientPomodoroPause;
 
   function addTask(input: TaskDraftInput) {
@@ -168,7 +194,7 @@ function App() {
   const pauseFocusSession = useCallback(() => {
     setFocusSession(current => ({
       ...current,
-      isPaused: true,
+      ...pauseTimer(current),
     }));
   }, []);
 
@@ -180,15 +206,36 @@ function App() {
     setActiveScreen(nextScreen);
   }, [activeScreen, pauseFocusSession]);
 
-  useEffect(() => {
-    const subscription = AppState.addEventListener('change', (nextState: AppStateStatus) => {
-      if (nextState !== 'active' && activeScreen === 'Focus') {
-        pauseFocusSession();
+  const syncAppBlocking = useCallback(
+    (active: boolean) => {
+      if (!blockedAppsHydrated) {
+        return;
       }
-    });
+      applyFocusBlocking(active, blockedPackages).catch(() => undefined);
+    },
+    [blockedAppsHydrated, blockedPackages],
+  );
 
-    return () => subscription.remove();
-  }, [activeScreen, pauseFocusSession]);
+  const shouldEnforceAppBlocking =
+    activeScreen === 'Focus' &&
+    focusSession.appBlockingEnabled &&
+    focusSession.phase === 'focus' &&
+    !focusSession.isPaused &&
+    blockedPackages.length > 0;
+
+  useEffect(() => {
+    if (!blockedAppsHydrated) {
+      return;
+    }
+
+    applyFocusBlocking(shouldEnforceAppBlocking, blockedPackages).catch(() => undefined);
+  }, [blockedAppsHydrated, shouldEnforceAppBlocking, blockedPackages, syncAppBlocking]);
+
+  useEffect(() => {
+    return () => {
+      applyFocusBlocking(false, []).catch(() => undefined);
+    };
+  }, []);
 
   const ScreenComponent = useMemo(() => {
     if (activeScreen === 'Scan') {
@@ -203,6 +250,9 @@ function App() {
           onBack={() => goToScreen('Utility')}
           ambientState={ambientState}
           setAmbientState={setAmbientState}
+          onAdjustVolume={adjustAmbientVolume}
+          onSetVolume={applyAmbientVolume}
+          ambientLibrary={ambientLibrary}
         />
       );
     }
@@ -232,6 +282,9 @@ function App() {
           }
           ambientSyncEnabled={ambientState.syncWithPomodoro}
           ambientHasSelection={Boolean(ambientState.activeId)}
+          blockedPackages={blockedPackages}
+          onSaveBlockedPackages={saveBlockedPackages}
+          onSyncAppBlocking={syncAppBlocking}
         />
       );
     }
@@ -246,7 +299,7 @@ function App() {
       );
     }
     if (activeScreen === 'Stats') {
-      return <StatsScreen {...stats} />;
+      return <StatsScreen {...stats} goal={learningGoal} tasks={tasks} />;
     }
     if (activeScreen === 'Profile') {
       return (
@@ -263,6 +316,7 @@ function App() {
         tasks={tasks}
         todayPlan={todayPlan}
         goal={learningGoal}
+        userName={authUser.name}
         onUpdateGoal={setLearningGoal}
         onOpenScan={() => goToScreen('Scan')}
         onStartFocus={() => goToScreen('Focus')}
@@ -278,11 +332,19 @@ function App() {
     focusSession,
     goToScreen,
     learningGoal,
-    stats,
+    authUser.name,
     tasks,
+    stats,
     todayPlan,
-    ambientState.activeId,
-    ambientState.syncWithPomodoro,
+    ambientState,
+    adjustAmbientVolume,
+    applyAmbientVolume,
+    ambientLibrary.userTracks,
+    ambientLibrary.addTracksFromDevice,
+    ambientLibrary.removeTrack,
+    blockedPackages,
+    saveBlockedPackages,
+    syncAppBlocking,
   ]);
 
   function signOut() {
@@ -356,16 +418,11 @@ function App() {
       ) : null}
 
       {activeAmbientSound ? (
-        <Video
-          source={activeAmbientSound.source}
+        <AmbientAudioPlayer
+          ref={ambientPlayerRef}
+          sound={activeAmbientSound}
           paused={ambientPlayerPaused}
           volume={ambientState.volume}
-          repeat
-          audioOnly
-          playInBackground
-          playWhenInactive
-          ignoreSilentSwitch="ignore"
-          style={styles.ambientPlayer}
         />
       ) : null}
     </SafeAreaView>
@@ -508,10 +565,6 @@ const styles = StyleSheet.create({
     fontWeight: '700',
     fontSize: 24,
     marginTop: -2,
-  },
-  ambientPlayer: {
-    width: 0,
-    height: 0,
   },
 });
 
